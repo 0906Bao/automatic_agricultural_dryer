@@ -1,17 +1,26 @@
+
 {
   "version": 1,
   "author": "Automatic Agricultural Dryer",
   "editor": "wokwi",
-
   "parts": [
     {
-      "type": "board-esp32-devkit-c-v4",
+      "type": "wokwi-esp32-devkit-v1",
       "id": "esp",
-      "top": -50,
+      "top": 0,
       "left": 0,
       "attrs": {}
     },
-
+    {
+      "type": "wokwi-dht22",
+      "id": "dht1",
+      "top": -15.53,
+      "left": 145.5,
+      "attrs": {
+        "temperature": "30",
+        "humidity": "60"
+      }
+    },
     {
       "type": "wokwi-potentiometer",
       "id": "rainSensor",
@@ -21,28 +30,15 @@
         "value": "500"
       }
     },
-
-    {
-      "type": "wokwi-dht22",
-      "id": "dht",
-      "top": 100,
-      "left": -300,
-      "attrs": {
-        "temperature": "30",
-        "humidity": "70"
-      }
-    },
-
     {
       "type": "wokwi-photoresistor-sensor",
       "id": "photo",
-      "top": 300,
+      "top": 250,
       "left": -300,
       "attrs": {
         "lux": "500"
       }
     },
-
     {
       "type": "wokwi-pushbutton",
       "id": "limitOpen",
@@ -54,7 +50,6 @@
         "bounce": "0"
       }
     },
-
     {
       "type": "wokwi-pushbutton",
       "id": "limitClose",
@@ -66,7 +61,6 @@
         "bounce": "0"
       }
     },
-
     {
       "type": "wokwi-led",
       "id": "statusLed",
@@ -77,7 +71,6 @@
         "label": "STATUS"
       }
     },
-
     {
       "type": "wokwi-resistor",
       "id": "ledResistor",
@@ -88,39 +81,115 @@
       }
     }
   ],
-
   "connections": [
-
-    ["esp:TX", "$serialMonitor:RX", "", []],
-    ["esp:RX", "$serialMonitor:TX", "", []],
-
-    ["rainSensor:VCC", "esp:3V3", "red", []],
-    ["rainSensor:GND", "esp:GND.1", "black", []],
-    ["rainSensor:SIG", "esp:D34", "green", []],
-
-    ["dht:VCC", "esp:3V3", "red", []],
-    ["dht:SDA", "esp:D4", "blue", []],
-    ["dht:GND", "esp:GND.1", "black", []],
-
-    ["photo:VCC", "esp:3V3", "red", []],
-    ["photo:GND", "esp:GND.1", "black", []],
-    ["photo:AO", "esp:D35", "yellow", []],
-
-    ["limitOpen:1.l", "esp:D18", "green", []],
-    ["limitOpen:2.l", "esp:GND.1", "black", []],
-
-    ["limitClose:1.l", "esp:D19", "green", []],
-    ["limitClose:2.l", "esp:GND.1", "black", []],
-
-    ["statusLed:A", "ledResistor:1", "red", []],
-    ["ledResistor:2", "esp:23", "green", []],
-    ["statusLed:C", "esp:GND.1", "black", []]
+    [
+      "esp:TX0",
+      "$serialMonitor:RX",
+      "",
+      []
+    ],
+    [
+      "esp:RX0",
+      "$serialMonitor:TX",
+      "",
+      []
+    ],
+    [
+      "dht1:SDA",
+      "esp:D15",
+      "green",
+      ["v0"]
+    ],
+    [
+      "dht1:VCC",
+      "esp:3V3",
+      "red",
+      ["v0"]
+    ],
+    [
+      "dht1:GND",
+      "esp:GND.1",
+      "black",
+      ["v0"]
+    ],
+    [
+      "rainSensor:VCC",
+      "esp:3V3",
+      "red",
+      []
+    ],
+    [
+      "rainSensor:GND",
+      "esp:GND.1",
+      "black",
+      []
+    ],
+    [
+      "rainSensor:SIG",
+      "esp:D34",
+      "green",
+      []
+    ],
+    [
+      "photo:VCC",
+      "esp:3V3",
+      "red",
+      []
+    ],
+    [
+      "photo:GND",
+      "esp:GND.1",
+      "black",
+      []
+    ],
+    [
+      "photo:AO",
+      "esp:D35",
+      "yellow",
+      []
+    ],
+    [
+      "limitOpen:1.l",
+      "esp:D18",
+      "green",
+      []
+    ],
+    [
+      "limitOpen:2.l",
+      "esp:GND.1",
+      "black",
+      []
+    ],
+    [
+      "limitClose:1.l",
+      "esp:D19",
+      "green",
+      []
+    ],
+    [
+      "limitClose:2.l",
+      "esp:GND.1",
+      "black",
+      []
+    ],
+    [
+      "statusLed:A",
+      "ledResistor:1",
+      "red",
+      []
+    ],
+    [
+      "ledResistor:2",
+      "esp:23",
+      "green",
+      []
+    ],
+    [
+      "statusLed:C",
+      "esp:GND.1",
+      "black",
+      []
+    ]
   ],
-
-  "serialMonitor": {
-    "display": "terminal",
-    "convertEol": true
-  },
-
   "dependencies": {}
 }
