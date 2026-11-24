@@ -40,6 +40,33 @@ test('75/85 percent humidity and invalid DHT produce the correct HA flags',()=>{
   d=state(h,{dht_valid:false,temperature_c:-999,humidity_pct:-999}).payload;
   assert.equal(d.temperature_c,null);assert.equal(d.humidity_pct,null);assert.equal(d.safe_to_open,false);
 });
+
+test('humidity advisory updates only the proposal; safety transitions stay distinct',()=>{
+  const h=harness();
+  let d=state(h,{humidity_pct:69.9}).payload;assert.equal(d.safety_status,'SAFE');assert.equal(d.cover_request,'OPEN');
+  for(const humidity of [70,75,80]){
+    d=state(h,{humidity_pct:humidity}).payload;
+    assert.equal(d.cover_request,'CLOSE');assert.equal(d.cover_reason,'HUMIDITY_WARNING');
+    assert.equal(d.safety_status,'WARNING');assert.equal(d.motion,'IDLE');assert.equal(d.mode,'AUTO');
+  }
+  d=state(h,{humidity_pct:80.1,cover_request:'CLOSE',cover_reason:'HUMIDITY_DANGER'}).payload;assert.equal(d.safety_status,'DANGER');
+  d=state(h,{safe_to_open:false,open_wait_remaining_s:18}).payload;assert.equal(d.safety_status,'WAITING');
+  d=state(h,{fault:'MOTION_TIMEOUT'}).payload;assert.equal(d.safety_status,'DANGER');
+  d=state(h,{rain:true}).payload;assert.equal(d.safety_status,'DANGER');
+});
+
+test('HA bridge carries device countdown without estimating time for old firmware',()=>{
+  const h=harness();
+  assert.equal(state(h,{cover_request:'CLOSE',cover_reason:'WAITING_SAFE',open_wait_remaining_s:18}).payload.cover_reason,'WAITING_SAFE');
+  assert.equal(state(h).payload.open_wait_remaining_s,null);
+  for(const remaining of [-1,0,1,15,30]){
+    assert.equal(state(h,{open_wait_remaining_s:remaining}).payload.open_wait_remaining_s,remaining);
+    assert.equal(JSON.parse(h.call('ha-state')[0].payload).open_wait_remaining_s,remaining);
+  }
+  for(const remaining of [-2,31,1.5,'bad',null]){
+    assert.equal(h.call('normalize',{payload:packet({open_wait_remaining_s:remaining})}),null);
+  }
+});
 test('physical roof state comes only from limits, never requested movement',()=>{
   const h=harness();
   assert.equal(state(h,{cover_request:'CLOSE',motion:'CLOSING'}).payload.roof_position,'unknown');

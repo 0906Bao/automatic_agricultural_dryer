@@ -95,3 +95,38 @@ test('dashboard sends explicit command on click and waits for device acknowledge
   assert.deepEqual(JSON.parse(request.opts.body),{command:'AUTO'});
   assert.match(b.elements.get('message').textContent,/chờ thiết bị/);
 });
+
+test('opening countdown follows ESP32 and clears on interrupted conditions or offline',async()=>{
+  const d={mode:'AUTO',fault:'NONE',dht_valid:true,humidity_pct:60,rain:false,dark:false,open_wait_remaining_s:8};
+  const b=browser(d,true); await b.context.refresh();
+  assert.match(b.elements.get('open-wait').textContent,/Còn 8 giây/);
+  assert.equal(b.elements.get('open-progress').value,2);
+  d.rain=true; await b.context.refresh();
+  assert.match(b.elements.get('open-wait').textContent,/Chưa đếm: có mưa/);
+  assert.equal(b.elements.get('open-progress').hidden,true);
+  d.rain=false; d.open_wait_remaining_s=10; await b.context.refresh();
+  assert.match(b.elements.get('open-wait').textContent,/Còn 10 giây/);
+  d.open_wait_remaining_s=0; d.safe_to_open=true; await b.context.refresh();
+  assert.equal(b.elements.get('open-wait').textContent,'Đủ điều kiện mở bạt');
+  d.mode='STOPPED'; await b.context.refresh();
+  assert.equal(b.elements.get('open-wait').textContent,'AUTO đang tắt');
+  d.mode='AUTO'; d.fault='MOTION_TIMEOUT'; await b.context.refresh();
+  assert.match(b.elements.get('open-wait').textContent,/Đang có lỗi/);
+  d.fault='NONE'; delete d.open_wait_remaining_s; await b.context.refresh();
+  assert.match(b.elements.get('open-wait').textContent,/Chờ dữ liệu thời gian/);
+  const offline=browser({...d,open_wait_remaining_s:8},false); await offline.context.refresh();
+  assert.match(offline.elements.get('open-wait').textContent,/Mất kết nối/);
+  assert.equal(offline.elements.get('open-progress').hidden,true);
+  b.context.fetch=async()=>{throw Error('offline');}; await b.context.refresh();
+  assert.match(b.elements.get('open-wait').textContent,/Mất kết nối/);
+});
+
+test('weather proposal explains keeping closed during the safe-time hold',async()=>{
+  for(const reason of ['NORMAL','WAITING_SAFE']){
+    const d={cover_request:'CLOSE',cover_reason:reason,open_wait_remaining_s:8};
+    const b=browser(d,true); await b.context.refresh();
+    assert.equal(b.elements.get('request').textContent,'Giữ bạt đóng · chờ đủ 10 giây an toàn · còn 8 giây');
+    d.cover_reason='RAIN'; await b.context.refresh();
+    assert.equal(b.elements.get('request').textContent,'CLOSE · RAIN');
+  }
+});

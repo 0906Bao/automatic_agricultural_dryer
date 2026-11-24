@@ -26,9 +26,9 @@ views:
 
       {% if is_state(''sensor.dryer_fault'',''MOTION_TIMEOUT'') %}
 
-      **Đã dừng do quá thời gian:** chưa chạm hành trình trong 20 giây. Trong Wokwi,
-      gạt LIMIT OPEN hoặc LIMIT CLOSE sang phải để xác nhận hành trình đích. Sau khi
-      kiểm tra, nhấn **Xóa lỗi**, rồi chọn lại chế độ.
+      **Đã dừng do quá thời gian:** chưa chạm hành trình trong thời gian cho phép.
+      Kiểm tra motor và hành trình, nhấn **Xóa lỗi**, rồi chọn lại chế độ. Bản Wokwi
+      mới tự mô phỏng hành trình khi để hai công tắc LIMIT bên trái.
 
       {% elif has_value(''sensor.dryer_fault'') and not is_state(''sensor.dryer_fault'',''NONE'')
       %}
@@ -56,29 +56,164 @@ views:
     - sensor.dryer_fault
     - sensor.dryer_fault_text
     card_size: 4
+  - type: custom:dryer-status-card
+    title: Cảnh báo
+    entities:
+    - entity: sensor.dryer_humidity_alert_text
+      name: Cảnh báo độ ẩm
+      icon: mdi:water-alert
+      state_entity: sensor.dryer_humidity_alert_text
+      colors:
+        Không có cảnh báo: success
+        Độ ẩm cao (70–80%): warning
+        Nguy hiểm (trên 80%): danger
+        Dữ liệu độ ẩm không hợp lệ: neutral
+      default_color: neutral
+    - entity: sensor.dryer_rain_text
+      name: Mưa
+      icon: mdi:weather-rainy
+      state_entity: binary_sensor.dryer_rain
+      colors: &id002
+        'on': danger
+        'off': success
+      default_color: info
+      state_icons:
+        'on': mdi:weather-pouring
+        'off': mdi:weather-sunny
+    - entity: sensor.dryer_dht_valid_text
+      name: Cảm biến nhiệt độ và độ ẩm
+      icon: mdi:thermometer-check
+      state_entity: binary_sensor.dryer_dht_valid
+      colors: &id004
+        'on': success
+        'off': danger
+      default_color: info
+      state_icons:
+        'on': mdi:thermometer-check
+        'off': mdi:thermometer-alert
+    - entity: sensor.dryer_limit_fault_text
+      name: Lỗi hành trình
+      icon: mdi:map-marker-alert
+      state_entity: binary_sensor.dryer_limit_fault
+      colors: &id005
+        'on': danger
+        'off': success
+      default_color: info
+    legend: true
   - type: markdown
     content: '# Giàn phơi nông sản
 
       Vị trí bạt chỉ được xác nhận bằng công tắc hành trình. **Đề xuất mở/đóng không
       có nghĩa là bạt đã tới vị trí đó.**'
-  - type: entities
+  - type: custom:dryer-status-card
     title: Tổng quan
-    show_header_toggle: false
     entities:
     - entity: sensor.dryer_online_text
       name: Kết nối thiết bị
+      icon: mdi:lan-connect
+      state_entity: binary_sensor.dryer_online
+      colors:
+        'on': success
+        'off': neutral
+      default_color: info
+      state_icons:
+        'on': mdi:lan-connect
+        'off': mdi:lan-disconnect
     - entity: sensor.dryer_mode_text
       name: Chế độ điều khiển
+      icon: mdi:autorenew
+      state_entity: sensor.dryer_mode
+      colors:
+        AUTO: success
+        STOPPED: neutral
+        MANUAL_OPEN: warning
+        MANUAL_CLOSE: warning
+      default_color: info
+      state_icons:
+        AUTO: mdi:autorenew
+        STOPPED: mdi:pause-circle-outline
+        MANUAL_OPEN: mdi:hand-back-right
+        MANUAL_CLOSE: mdi:hand-back-right
     - entity: sensor.dryer_roof_position_text
       name: Vị trí bạt
+      icon: mdi:awning-outline
+      state_entity: sensor.dryer_roof_position
+      colors:
+        Đã mở hoàn toàn: success
+        Đã đóng hoàn toàn: info
+        Chưa chạm hành trình: warning
+        Lỗi hai công tắc: danger
+      default_color: info
     - entity: sensor.dryer_cover_request_text
       name: Đề xuất theo thời tiết
+      icon: mdi:awning
+      state_entity: sensor.dryer_cover_request
+      colors:
+        OPEN: success
+        CLOSE: warning
+      default_color: info
     - entity: sensor.dryer_cover_reason_text
       name: Nguyên nhân đề xuất
+      icon: mdi:weather-partly-cloudy
+      state_entity: sensor.dryer_cover_reason
+      colors:
+        NORMAL: success
+        WAITING_SAFE: warning
+        RAIN: danger
+        DARK: warning
+        DHT_ERROR: danger
+        HUMIDITY_WARNING: warning
+        HUMIDITY_DANGER: danger
+      default_color: info
+    - entity: sensor.dryer_safety_status_text
+      name: Mức an toàn
+      icon: mdi:shield-check
+      state_entity: sensor.dryer_safety_status
+      colors:
+        SAFE: success
+        WARNING: warning
+        DANGER: danger
+        WAITING: warning
+      default_color: info
     - entity: sensor.dryer_motion_text
       name: Lệnh chuyển động
+      icon: mdi:swap-vertical
+      state_entity: sensor.dryer_motion
+      colors:
+        IDLE: neutral
+        OPENING: info
+        CLOSING: info
+        REVERSAL_WAIT: warning
+        FAULT: danger
+      default_color: info
     - entity: sensor.dryer_fault_text
       name: Tình trạng lỗi
+      icon: mdi:shield-alert
+      state_entity: sensor.dryer_fault
+      colors:
+        NONE: success
+      default_color: danger
+      state_icons:
+        NONE: mdi:shield-check
+    legend: false
+  - type: custom:dryer-status-card
+    title: Chờ điều kiện mở bạt
+    entities:
+    - entity: sensor.dryer_open_wait_status
+      name: Tiến độ điều kiện mở
+      icon: mdi:timer-sand
+      state_entity: binary_sensor.dryer_safe_to_open
+      colors: &id001
+        'on': success
+        'off': warning
+      default_color: info
+    - entity: sensor.dryer_open_wait_remaining
+      name: Thời gian còn lại
+      icon: mdi:timer-sand
+      state_entity: binary_sensor.dryer_safe_to_open
+      colors: *id001
+      default_color: info
+    legend: false
   - type: conditional
     conditions:
     - entity: binary_sensor.dryer_motor_output_enabled
@@ -87,17 +222,6 @@ views:
       type: markdown
       content: '**Đầu ra motor đang khóa.** Bạt chưa tự di chuyển. Trong mô phỏng,
         gạt công tắc hành trình đóng hoặc mở sang phải để xác nhận vị trí.'
-  - type: conditional
-    conditions:
-    - entity: binary_sensor.dryer_motor_output_enabled
-      state: 'on'
-    card:
-      type: markdown
-      content: '**Đầu ra motor đã bật.** Khi thử Wokwi, motor chưa tự tác động công
-        tắc hành trình. Trước 20 giây, gạt **LIMIT OPEN hoặc LIMIT CLOSE sang phải**
-        để xác nhận hành trình đích; gạt về trái để nhả trước khi đi chiều ngược lại.
-        Không bật đồng thời hai hành trình. Nếu quá thời gian, hệ thống dừng và tắt
-        AUTO; kiểm tra rồi nhấn **Xóa lỗi**.'
   - type: grid
     columns: 2
     square: false
@@ -116,22 +240,60 @@ views:
         green: 0
         yellow: 70
         red: 81
-  - type: entities
+  - type: custom:dryer-status-card
     title: Môi trường
-    show_header_toggle: false
     entities:
     - entity: sensor.dryer_rain_adc_text
       name: Giá trị cảm biến mưa
+      icon: mdi:weather-rainy
+      state_entity: binary_sensor.dryer_rain
+      colors: *id002
+      default_color: info
     - entity: sensor.dryer_rain_text
       name: Mưa
+      icon: mdi:weather-rainy
+      state_entity: binary_sensor.dryer_rain
+      colors: *id002
+      default_color: info
+      state_icons:
+        'on': mdi:weather-pouring
+        'off': mdi:weather-sunny
     - entity: sensor.dryer_light_adc_text
       name: Giá trị cảm biến ánh sáng
+      icon: mdi:brightness-6
+      state_entity: binary_sensor.dryer_dark
+      colors: &id003
+        'on': warning
+        'off': success
+      default_color: info
     - entity: sensor.dryer_dark_text
       name: Trời tối
+      icon: mdi:weather-night
+      state_entity: binary_sensor.dryer_dark
+      colors: *id003
+      default_color: info
+      state_icons:
+        'on': mdi:weather-night
+        'off': mdi:white-balance-sunny
     - entity: sensor.dryer_dht_valid_text
       name: Cảm biến nhiệt độ và độ ẩm
+      icon: mdi:thermometer-check
+      state_entity: binary_sensor.dryer_dht_valid
+      colors: *id004
+      default_color: info
+      state_icons:
+        'on': mdi:thermometer-check
+        'off': mdi:thermometer-alert
     - entity: sensor.dryer_safe_to_open_text
       name: Điều kiện mở bạt
+      icon: mdi:shield-check
+      state_entity: binary_sensor.dryer_safe_to_open
+      colors: *id001
+      default_color: info
+      state_icons:
+        'on': mdi:shield-check
+        'off': mdi:timer-sand
+    legend: false
   - type: grid
     title: Chọn chế độ và điều khiển
     columns: 3
@@ -189,26 +351,73 @@ views:
           entity_id: button.dryer_reset
         confirmation:
           text: Gửi yêu cầu xóa lỗi? ESP32 vẫn kiểm tra điều kiện an toàn.
-  - type: entities
+  - type: custom:dryer-status-card
     title: Hành trình và bảo vệ
-    show_header_toggle: false
     entities:
     - entity: sensor.dryer_limit_closed_text
       name: Hành trình đóng
+      icon: mdi:arrow-collapse-horizontal
+      state_entity: binary_sensor.dryer_limit_closed
+      colors:
+        'on': success
+        'off': neutral
+      default_color: info
     - entity: sensor.dryer_limit_open_text
       name: Hành trình mở
+      icon: mdi:arrow-expand-horizontal
+      state_entity: binary_sensor.dryer_limit_open
+      colors:
+        'on': success
+        'off': neutral
+      default_color: info
     - entity: sensor.dryer_limit_fault_text
       name: Lỗi hành trình
+      icon: mdi:map-marker-alert
+      state_entity: binary_sensor.dryer_limit_fault
+      colors: *id005
+      default_color: info
     - entity: sensor.dryer_estop_text
       name: Dừng khẩn
+      icon: mdi:stop-circle-outline
+      state_entity: binary_sensor.dryer_estop
+      colors:
+        'on': danger
+        'off': success
+      default_color: info
     - entity: sensor.dryer_driver_fault_text
       name: Lỗi bộ điều khiển motor
+      icon: mdi:engine-off
+      state_entity: binary_sensor.dryer_driver_fault
+      colors:
+        'on': danger
+        'off': success
+      default_color: info
     - entity: sensor.dryer_motor_output_enabled_text
       name: Đầu ra motor
+      icon: mdi:power-plug
+      state_entity: binary_sensor.dryer_motor_output_enabled
+      colors:
+        'on': info
+        'off': neutral
+      default_color: info
     - entity: sensor.dryer_motor_active_text
       name: Hoạt động motor
+      icon: mdi:engine
+      state_entity: binary_sensor.dryer_motor_active
+      colors:
+        'on': info
+        'off': neutral
+      default_color: info
     - entity: sensor.dryer_command_result_text
       name: Kết quả yêu cầu gần nhất
+      icon: mdi:message-check-outline
+      state_entity: sensor.dryer_command_result
+      colors:
+        ACCEPTED: success
+        PENDING: warning
+        SUPERSEDED: warning
+      default_color: danger
+    legend: false
   - type: history-graph
     title: Nhiệt độ và độ ẩm · 24 giờ
     hours_to_show: 24
@@ -225,21 +434,3 @@ views:
       name: Cảm biến mưa
     - entity: sensor.dryer_light_adc
       name: Cảm biến ánh sáng
-  - type: entities
-    title: Cảnh báo
-    show_header_toggle: false
-    entities:
-    - entity: sensor.dryer_humidity_warning_text
-      name: Cảnh báo độ ẩm cao
-    - entity: sensor.dryer_humidity_danger_text
-      name: Độ ẩm nguy hiểm
-    - entity: sensor.dryer_rain_text
-      name: Mưa
-    - entity: sensor.dryer_dht_valid_text
-      name: Cảm biến nhiệt độ và độ ẩm
-    - entity: sensor.dryer_limit_fault_text
-      name: Lỗi hành trình
-  - type: markdown
-    content: '**Nút dừng trên mạng không thay thế dừng khẩn vật lý.** Chuyển thủ công
-      hoặc xóa lỗi đều đưa hệ thống về trạng thái dừng. Sau đó cần chọn lại chế độ.
-      Khi thiết bị mất kết nối, trạng thái tự động hiển thị chưa xác nhận.'

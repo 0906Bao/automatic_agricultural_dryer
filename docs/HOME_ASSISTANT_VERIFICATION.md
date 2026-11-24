@@ -50,7 +50,7 @@ Kết quả kỹ thuật không chứa secrets ở `.local/ha-runtime-test-resul
 
 16 kiểm tra live gồm: nhận nhiệt độ; đổi nhiệt độ; cảnh báo RH75; nguy hiểm RH85/yêu cầu đóng hiển thị; mưa; tối; DHT invalid không hiển thị số cũ; button CLOSE qua envelope/ACK emulator; cover OPEN và phản hồi từ chối emulator; closed limit; open limit; cả hai OFF → unknown; cả hai ON → fault/unknown; telemetry stale → offline; có dữ liệu trở lại; **restart Core thật và tự nhận dữ liệu MQTT mới trở lại**.
 
-Các assertion C++ chạy trực tiếp header production, với thời gian/đầu vào do test điều khiển, xác nhận interlock 30 giây và bộ điều khiển motor. Chúng không đo thời gian thực, dòng kẹt, độ trễ GPIO hoặc độ tin cậy phần cứng.
+Các assertion C++ chạy trực tiếp header production, với thời gian/đầu vào do test điều khiển, xác nhận interlock 10 giây và bộ điều khiển motor. Chúng không đo thời gian thực, dòng kẹt, độ trễ GPIO hoặc độ tin cậy phần cứng.
 
 ## Ma trận 14 tình huống của yêu cầu
 
@@ -62,7 +62,7 @@ Các assertion C++ chạy trực tiếp header production, với thời gian/đ�
 | 4 | Độ ẩm 85% | Đã quan sát humidity_danger ON và CLOSE hiển thị; logic đóng firmware được kiểm tra bằng C++; chưa sensor/motor thật |
 | 5 | Rain ADC >=2200 | Đã quan sát ADC2300/rain ON qua fixture; đọc ADC/chân thật chưa xác minh |
 | 6 | LDR tối | Đã quan sát dark ON qua fixture; chuyển lux/hysteresis trên Wokwi chưa xác minh |
-| 7 | An toàn đủ 30 giây mới mở | C++ production: từ chối trước mốc30 giây, cho phép đúng mốc và reset timer khi điều kiện gián đoạn; chưa đo trên board thật |
+| 7 | An toàn đủ 10 giây mới mở | C++ production: từ chối trước mốc10 giây, cho phép đúng mốc và reset timer khi điều kiện gián đoạn; chưa đo trên board thật |
 | 8 | DHT22 lỗi | HA hiển thị temperature unavailable/dht_valid OFF, không dùng -999; C++ kiểm tra interlock; chưa rút cảm biến thật |
 | 9 | CLOSE từ HA | Đã chạy MQTT Button → Node-RED → envelope → ACK emulator; chưa xác nhận ESP32 nhận |
 | 10 | OPEN khi mưa | Đã quan sát phản hồi REJECTED từ emulator; interlock firmware có host test; chưa thử ESP32 thật |
@@ -81,7 +81,7 @@ Cập nhật chẩn đoán Unknown/Unavailable sau bàn giao: log broker ghi nh�
 
 1. Đăng nhập `dryer-admin` bằng mật khẩu lưu trong `%LOCALAPPDATA%\AutomaticAgriculturalDryer\HAOS\access.json`; đổi mật khẩu theo nhu cầu, không chia sẻ file có token.
 2. Chạy Wokwi hoặc nạp firmware vừa build vào đúng ESP32. Không mở khóa motor thật khi chưa nghiệm thu driver/nguồn/hành trình/dừng khẩn.
-3. Kiểm tra toàn bộ 14 tình huống trên mô phỏng/phần cứng thật, đặc biệt các mốc ADC, 30 giây, lỗi cảm biến.
+3. Kiểm tra toàn bộ 14 tình huống trên mô phỏng/phần cứng thật, đặc biệt các mốc ADC, 10 giây, lỗi cảm biến.
 4. Trên điện thoại cùng LAN, mở URL LAN/đăng nhập Companion App, kiểm tra cảnh báo. HTTP200 từ host không thay thế kiểm tra bằng điện thoại.
 5. Chuyển MQTT sang xác thực/ACL theo lịch bảo trì trước khi sử dụng thực tế; anonymous hiện tại chỉ dành cho lab và chưa được âm thầm thay đổi.
 6. Cấu hình autostart VMware sau reboot nếu muốn chạy liên tục; gateway đã có restart unless-stopped nhưng VM không tự bật theo Docker.

@@ -32,7 +32,7 @@ Mất Home Assistant/Node-RED/MQTT không tắt tác vụ điều khiển tự �
 - Mosquitto đang dùng `mosquitto/mosquitto.conf`, anonymous access cho lab. Đây chưa phải cấu hình xác thực production.
 - Node-RED đang lưu flow trong volume; flow trên đĩa project không tự ghi đè volume đã có. Khi triển khai đã sao lưu `/data` và thêm riêng tab bridge, giữ các node cũ.
 - GPIO giữ nguyên: mưa 34, LDR 35, DHT22 15, hành trình đóng 18/mở 19, LED 23. Ngưỡng 2200/2200/1800 và độ ẩm 70/80% không đổi.
-- Thay đổi an toàn có chủ đích: trước đây OPEN thủ công chỉ yêu cầu điều kiện an toàn tức thời; nay **mọi OPEN đều cần đủ 30 giây an toàn liên tục**, đúng yêu cầu tích hợp này. Home Assistant và Node-RED cũng nhận cùng interlock tại ESP32.
+- Thay đổi an toàn có chủ đích: trước đây OPEN thủ công chỉ yêu cầu điều kiện an toàn tức thời; nay **mọi OPEN đều cần đủ 10 giây an toàn liên tục**, đúng yêu cầu tích hợp này. Home Assistant và Node-RED cũng nhận cùng interlock tại ESP32.
 
 ## Các thành phần và địa chỉ
 
@@ -111,7 +111,7 @@ Bật Debug node `Dryer HA telemetry / ACK` trong tab mới để xem dữ liệ
 - Hết 5 giây chưa thấy ACK qua telemetry → TIMEOUT. Không tự thử lại lệnh chuyển động. TIMEOUT không chứng minh thiết bị đã dừng; quan sát trạng thái mới và dùng dừng khẩn vật lý.
 - ACK xác nhận firmware nhận/chấp nhận hoặc từ chối; **không xác nhận mái đã tới vị trí**. Chỉ hành trình xác nhận vị trí.
 - AUTO dùng logic ESP32. MANUAL đưa về STOPPED, sau đó OPEN/CLOSE vào MANUAL_OPEN/MANUAL_CLOSE. STOP giữ dừng; RESET chỉ xóa lỗi về STOPPED.
-- OPEN cần khô, sáng, DHT hợp lệ, độ ẩm <70% liên tục 30 giây và không lỗi. CLOSE vẫn đi qua kiểm tra dừng khẩn, driver fault và lỗi hành trình, không bypass các bảo vệ.
+- OPEN cần khô, sáng, DHT hợp lệ, độ ẩm <70% liên tục 10 giây và không lỗi. CLOSE vẫn đi qua kiểm tra dừng khẩn, driver fault và lỗi hành trình, không bypass các bảo vệ.
 - Khởi động lại ESP32 vẫn STOPPED.
 
 ## Home Assistant entities
@@ -198,13 +198,13 @@ Trước triển khai, dữ liệu Node-RED và cấu hình broker được sao 
 | Không mở được 8123 | VM đã boot chưa; `docker logs iot-ha-access`; HA_VM_ADDRESS đúng; Docker Desktop chạy |
 | MQTT không kết nối | VM dùng IP Windows VMnet8, không dùng localhost/mosquitto; kiểm tra Firewall1883 và credentials |
 | Entity unavailable | Có firmware mới với safe_to_open; bridge validator/Debug; telemetry mới <10 giây; HA MQTT integration đã thêm |
-| OPEN bị từ chối | Chờ 30 giây khô/sáng/DHT hợp lệ/RH<70; kiểm tra estop/driver/limit fault; RESET không tự chạy |
+| OPEN bị từ chối | Chờ 10 giây khô/sáng/DHT hợp lệ/RH<70; kiểm tra estop/driver/limit fault; RESET không tự chạy |
 | Cover unknown | Chưa có công tắc xác nhận; không phải lỗi UI; cả hai ON cần kiểm tra cơ/điện |
 | PENDING → TIMEOUT | Không thấy ACK đúng session/sequence trong5 giây; không tự gửi lại; kiểm tra ESP32/Wokwi |
 
 ## Kiểm thử và phạm vi xác minh
 
-Chạy `powershell -NoProfile -ExecutionPolicy Bypass -File test/run-host.ps1`: kiểm thử trực tiếp các lớp C++ production và 15 bài Node.js (bao gồm 8 bài bridge HA). Các bài host xác nhận timeout/hành trình/fault/đảo chiều/timer tràn, đủ 30 giây mới mở, validator, vị trí thực tế, TTL, rate limit, ACK và stale. Đây **không phải** kiểm thử motor/Wokwi thực tế.
+Chạy `powershell -NoProfile -ExecutionPolicy Bypass -File test/run-host.ps1`: kiểm thử trực tiếp các lớp C++ production và 15 bài Node.js (bao gồm 8 bài bridge HA). Các bài host xác nhận timeout/hành trình/fault/đảo chiều/timer tràn, đủ 10 giây mới mở, validator, vị trí thực tế, TTL, rate limit, ACK và stale. Đây **không phải** kiểm thử motor/Wokwi thực tế.
 
 `python tools/build-home-assistant.py --check` và `node tools/build-flow.cjs --check` xác nhận file sinh khớp nguồn. `ha core check` kiểm tra bằng Home Assistant thật. Xem `docs/HOME_ASSISTANT_VERIFICATION.md` cho kết quả thực thi, phiên bản và ma trận 15 tình huống; không coi các mục chưa chạy là đã đạt.
 
@@ -213,7 +213,7 @@ Chạy `powershell -NoProfile -ExecutionPolicy Bypass -File test/run-host.ps1`: 
 1. **Khảo sát:** đọc firmware, hai Compose, hai Mosquitto config, flow nguồn và flow thực tế; xác định network/volume, sao lưu. Không xóa container/volume.
 2. **Hạ tầng HAOS:** thêm `setup-haos-vm.ps1`, CONFIG ISO helper, gateway `ha-access.cjs`, Compose ha-access; tạo VM riêng ngoài OneDrive. Bước thủ công khi cần: tài khoản/đăng nhập cá nhân, startup VM sau reboot, Firewall LAN.
 3. **MQTT entities/Node-RED:** thêm validator, ha-state/command/watchdog, export bridge riêng; `home-assistant/packages/dryer.yaml` và generator. Tab cũ được giữ lại. Bước thủ công khi chuyển máy: nhập bridge và thêm MQTT integration theo IP host mới.
-4. **An toàn:** sửa WeatherPolicy và telemetry thêm safe_to_open; mở thủ công cũng chờ30 giây. Build mới và nạp/chạy firmware trên ESP32/Wokwi là bước người dùng cần thực hiện để thiết bị thực chạy bản này.
+4. **An toàn:** sửa WeatherPolicy và telemetry thêm safe_to_open; mở thủ công cũng chờ10 giây. Build mới và nạp/chạy firmware trên ESP32/Wokwi là bước người dùng cần thực hiện để thiết bị thực chạy bản này.
 5. **Dashboard/cảnh báo:** YAML dashboard, recorder14 ngày, persistent notifications; không yêu cầu add-on frontend. Companion App/push notification cần đăng ký điện thoại thực tế.
 6. **Kiểm tra/bàn giao:** C++/Node.js, config check, kiểm tra runtime được ghi riêng; tài liệu backup, bảo mật, LAN và giới hạn. Motor cần nghiệm thu thực tế, không suy diễn từ host tests.
 

@@ -29,12 +29,16 @@ if (out.dht_valid) {
 } else { out.temperature_c = null; out.humidity_pct = null; }
 out.humidity_warning = out.dht_valid && out.humidity_pct >= 70;
 out.humidity_danger = out.dht_valid && out.humidity_pct > 80;
+// Older firmware has no countdown. Keep it unknown instead of inventing a timer.
+out.open_wait_remaining_s = d.open_wait_remaining_s === undefined ? null :
+    number(d.open_wait_remaining_s, -1, 30, true);
+if (d.open_wait_remaining_s !== undefined && out.open_wait_remaining_s === null) return null;
 const enums = {
     mode: ['STOPPED','AUTO','MANUAL_OPEN','MANUAL_CLOSE'],
     motion: ['IDLE','OPENING','CLOSING','REVERSAL_WAIT','FAULT'],
     fault: ['NONE','ESTOP','BOTH_LIMITS','MOTION_TIMEOUT','DRIVER_FAULT'],
     cover_request: ['OPEN','CLOSE'],
-    cover_reason: ['NORMAL','RAIN','DARK','DHT_ERROR','HUMIDITY_WARNING','HUMIDITY_DANGER']
+    cover_reason: ['NORMAL','WAITING_SAFE','RAIN','DARK','DHT_ERROR','HUMIDITY_WARNING','HUMIDITY_DANGER']
 };
 for (const [key, values] of Object.entries(enums)) {
     if (!values.includes(d[key])) return null; out[key] = d[key];
@@ -49,6 +53,12 @@ out.roof_position = out.limit_fault ? 'FAULT' : out.limit_covered ? 'closed' :
     out.limit_open ? 'open' : 'unknown';
 out.safe_to_open = out.safe_to_open && !out.rain && !out.dark && out.dht_valid &&
     out.humidity_pct < 70 && !out.limit_fault && !out.estop && !out.driver_fault && out.fault === 'NONE';
+const humidityAdvisory = out.dht_valid && out.humidity_pct >= 70 && out.humidity_pct <= 80 && !out.rain && !out.dark;
+// Presentation compatibility for older firmware. This never sends a command.
+if (humidityAdvisory) { out.cover_request = 'CLOSE'; out.cover_reason = 'HUMIDITY_WARNING'; }
+out.safety_status = out.rain || out.dark || !out.dht_valid || out.humidity_danger ||
+    out.limit_fault || out.estop || out.driver_fault || out.fault !== 'NONE' ? 'DANGER' :
+    humidityAdvisory ? 'WARNING' : out.safe_to_open ? 'SAFE' : 'WAITING';
 msg.payload = out;
 flow.set('dryerState', {data:out, receivedAt:Date.now()});
 return msg;

@@ -21,6 +21,7 @@ button[data-command=STOP]{background:#a5332d}button[data-command=RESET]{backgrou
 <div class="card"><div class="label">Thời tiết</div><div class="value" id="weather">—</div></div>
 <div class="card"><div class="label">Yêu cầu tự động</div><div class="value" id="request">—</div></div>
 <div class="card"><div class="label">Chế độ</div><div class="value" id="mode">—</div></div>
+<div class="card"><div class="label">Chờ điều kiện mở bạt</div><div class="value" id="open-wait">Chưa có dữ liệu</div><progress id="open-progress" max="10" value="0" hidden aria-label="Thời gian điều kiện mở bạt ổn định"></progress><div class="note">Cần khô, sáng, DHT tốt và độ ẩm dưới 70% liên tục 10 giây. Điều kiện gián đoạn sẽ tính lại từ đầu.</div></div>
 <div class="card"><div class="label">Chuyển động</div><div class="value" id="motion">—</div></div>
 <div class="card"><div class="label">Công tắc hành trình</div><div class="value" id="limits">—</div></div>
 <div class="card"><div class="label">Lỗi</div><div class="value" id="fault">—</div></div>
@@ -33,6 +34,21 @@ button[data-command=STOP]{background:#a5332d}button[data-command=RESET]{backgrou
 const $ = id => document.getElementById(id);
 let live = false, busy = false, pending = null;
 function buttons() { document.querySelectorAll('button[data-command]').forEach(b => { b.disabled = !live || (busy && b.dataset.command !== 'STOP'); }); }
+function openingWait(d) {
+  const progress = $('open-progress'); progress.hidden = true; progress.value = 0;
+  if (!live) return 'Mất kết nối · chưa xác nhận';
+  if (!d) return 'Chưa có dữ liệu';
+  if (d.fault !== 'NONE' || d.estop || d.driver_fault) return 'Đang có lỗi · chưa thể mở';
+  if (d.mode !== 'AUTO') return 'AUTO đang tắt';
+  const blockers = [d.rain && 'có mưa', d.dark && 'trời tối', !d.dht_valid && 'DHT lỗi', d.dht_valid && d.humidity_pct >= 70 && 'độ ẩm từ 70%'].filter(Boolean);
+  if (blockers.length) return `Chưa đếm: ${blockers.join(', ')}`;
+  const remaining = d.open_wait_remaining_s;
+  if (!Number.isInteger(remaining) || remaining < 0 || remaining > 10) return 'Chờ dữ liệu thời gian từ ESP32';
+  if (remaining === 0 && d.safe_to_open) return d.limit_open ? 'Bạt đã mở · đủ điều kiện' : 'Đủ điều kiện mở bạt';
+  if (remaining === 0) return 'Chưa xác nhận đủ điều kiện';
+  progress.hidden = false; progress.value = 10 - remaining;
+  return `Còn ${remaining} giây · đã ổn định ${10 - remaining}/10 giây`;
+}
 async function refresh() {
   try {
     const response = await fetch('/dryer/state', {cache:'no-store', signal:AbortSignal.timeout(4000)});
@@ -41,11 +57,14 @@ async function refresh() {
     $('connection').textContent = live ? 'Đang kết nối' : 'Mất kết nối / dữ liệu cũ';
     $('connection').classList.toggle('online', live);
     const d = state.telemetry;
+    $('open-wait').textContent = openingWait(d);
     if (d) {
       $('temperature').textContent = live && d.dht_valid ? `${d.temperature_c} °C` : 'Không hợp lệ';
       $('humidity').textContent = live && d.dht_valid ? `${d.humidity_pct} %` : 'Không hợp lệ';
       $('weather').textContent = `${d.rain ? 'Mưa' : 'Khô'} · ${d.dark ? 'Tối' : 'Sáng'}`;
-      $('request').textContent = `${d.cover_request} · ${d.cover_reason}`;
+      const waitingSafe = d.cover_request === 'CLOSE' && ['NORMAL','WAITING_SAFE'].includes(d.cover_reason);
+      const waitSeconds = Number.isInteger(d.open_wait_remaining_s) && d.open_wait_remaining_s > 0 ? ` · còn ${d.open_wait_remaining_s} giây` : '';
+      $('request').textContent = waitingSafe ? `Giữ bạt đóng · chờ đủ 10 giây an toàn${waitSeconds}` : `${d.cover_request} · ${d.cover_reason}`;
       for (const key of ['mode','motion','fault']) $(key).textContent = d[key];
       $('fault').dataset.fault = d.fault !== 'NONE';
       $('limits').textContent = `Đóng: ${d.limit_covered ? 'ON' : 'OFF'} / Mở: ${d.limit_open ? 'ON' : 'OFF'}`;
@@ -55,7 +74,7 @@ async function refresh() {
       if (pending && d.last_command_seq === pending.sequence) { $('message').textContent = `Thiết bị phản hồi: ${d.last_command_result}`; pending = null; }
       if (pending && d.last_command_seq > pending.sequence) { $('message').textContent = 'Có lệnh mới hơn từ phiên điều khiển khác; xem trạng thái hiện tại.'; pending = null; }
     }
-  } catch (_) { live = false; $('connection').textContent = 'Không truy cập được Node-RED'; $('connection').classList.remove('online'); }
+  } catch (_) { live = false; $('connection').textContent = 'Không truy cập được Node-RED'; $('connection').classList.remove('online'); $('open-wait').textContent = openingWait(null); }
   buttons();
 }
 document.querySelectorAll('button[data-command]').forEach(button => button.addEventListener('click', async () => {
@@ -69,5 +88,5 @@ document.querySelectorAll('button[data-command]').forEach(button => button.addEv
   } catch (error) { $('message').textContent = error.message; }
   busy = false; buttons();
 }));
-refresh(); setInterval(refresh, 2000);
+refresh(); setInterval(refresh, 1000);
 </script></body></html>

@@ -10,6 +10,7 @@ mqtt:
     device_class: temperature
     unit_of_measurement: °C
     state_class: measurement
+    icon: mdi:thermometer
     availability_mode: all
     availability:
     - topic: dryer/ha/availability
@@ -24,6 +25,7 @@ mqtt:
     device_class: humidity
     unit_of_measurement: '%'
     state_class: measurement
+    icon: mdi:water-percent
     availability_mode: all
     availability:
     - topic: dryer/ha/availability
@@ -37,6 +39,7 @@ mqtt:
     expire_after: 12
     value_template: '{{ value_json.rain_adc }}'
     state_class: measurement
+    icon: mdi:weather-rainy
   - name: Giá trị cảm biến ánh sáng
     unique_id: dryer_light_adc
     default_entity_id: sensor.dryer_light_adc
@@ -45,6 +48,19 @@ mqtt:
     expire_after: 12
     value_template: '{{ value_json.light_adc }}'
     state_class: measurement
+    icon: mdi:brightness-6
+  - name: Thời gian chờ mở bạt còn lại
+    unique_id: dryer_open_wait_remaining
+    default_entity_id: sensor.dryer_open_wait_remaining
+    state_topic: dryer/ha/state
+    availability_topic: dryer/ha/availability
+    expire_after: 12
+    value_template: '{{ value_json.open_wait_remaining_s if value_json.open_wait_remaining_s
+      is defined and value_json.open_wait_remaining_s is number and value_json.open_wait_remaining_s
+      >= 0 else ''None'' }}'
+    unit_of_measurement: s
+    device_class: duration
+    icon: mdi:timer-sand
   - name: Đề xuất theo thời tiết
     unique_id: dryer_cover_request
     default_entity_id: sensor.dryer_cover_request
@@ -52,6 +68,7 @@ mqtt:
     availability_topic: dryer/ha/availability
     expire_after: 12
     value_template: '{{ value_json.cover_request }}'
+    icon: mdi:awning
   - name: Nguyên nhân đề xuất
     unique_id: dryer_cover_reason
     default_entity_id: sensor.dryer_cover_reason
@@ -59,6 +76,7 @@ mqtt:
     availability_topic: dryer/ha/availability
     expire_after: 12
     value_template: '{{ value_json.cover_reason }}'
+    icon: mdi:weather-partly-cloudy
   - name: Chế độ điều khiển
     unique_id: dryer_mode
     default_entity_id: sensor.dryer_mode
@@ -66,6 +84,7 @@ mqtt:
     availability_topic: dryer/ha/availability
     expire_after: 12
     value_template: '{{ value_json.mode }}'
+    icon: mdi:autorenew
   - name: Lệnh chuyển động
     unique_id: dryer_motion
     default_entity_id: sensor.dryer_motion
@@ -73,6 +92,7 @@ mqtt:
     availability_topic: dryer/ha/availability
     expire_after: 12
     value_template: '{{ value_json.motion }}'
+    icon: mdi:swap-vertical
   - name: Tình trạng lỗi
     unique_id: dryer_fault
     default_entity_id: sensor.dryer_fault
@@ -80,6 +100,7 @@ mqtt:
     availability_topic: dryer/ha/availability
     expire_after: 12
     value_template: '{{ value_json.fault }}'
+    icon: mdi:shield-alert
   - name: Vị trí bạt
     unique_id: dryer_roof_position
     default_entity_id: sensor.dryer_roof_position
@@ -89,13 +110,42 @@ mqtt:
     value_template: '{{ {''open'': ''Đã mở hoàn toàn'', ''closed'': ''Đã đóng hoàn
       toàn'', ''unknown'': ''Chưa chạm hành trình'', ''FAULT'': ''Lỗi hai công tắc''}.get(value_json.roof_position,
       ''Dữ liệu vị trí không hợp lệ'') }}'
+    icon: mdi:awning-outline
+  - name: Mức an toàn
+    unique_id: dryer_safety_status
+    default_entity_id: sensor.dryer_safety_status
+    state_topic: dryer/ha/state
+    availability_topic: dryer/ha/availability
+    expire_after: 12
+    value_template: '{{ value_json.safety_status }}'
+    icon: mdi:shield-check
   - name: Kết quả yêu cầu gần nhất
     unique_id: dryer_command_result
     default_entity_id: sensor.dryer_command_result
     state_topic: dryer/ha/command_result
     availability_topic: dryer/ha/availability
     value_template: '{{ value_json.result }}'
+    icon: mdi:message-check-outline
     json_attributes_topic: dryer/ha/command_result
+  - name: Đề xuất và điều kiện an toàn
+    unique_id: dryer_decision
+    default_entity_id: sensor.dryer_decision
+    state_topic: dryer/ha/state
+    availability_topic: dryer/ha/availability
+    expire_after: 12
+    value_template: '{{ [value_json.cover_request, value_json.cover_reason, value_json.safety_status,
+      value_json.rain, value_json.dark, value_json.dht_valid, value_json.safe_to_open,
+      value_json.fault, value_json.estop, value_json.driver_fault, value_json.limit_fault]
+      | to_json }}'
+    json_attributes_topic: dryer/ha/state
+    json_attributes_template: '{{ {''cover_request'': value_json.cover_request, ''cover_reason'':
+      value_json.cover_reason, ''safety_status'': value_json.safety_status, ''rain'':
+      value_json.rain, ''dark'': value_json.dark, ''dht_valid'': value_json.dht_valid,
+      ''safe_to_open'': value_json.safe_to_open, ''fault'': value_json.fault, ''estop'':
+      value_json.estop, ''driver_fault'': value_json.driver_fault, ''limit_fault'':
+      value_json.limit_fault, ''humidity_pct'': value_json.humidity_pct, ''mode'':
+      value_json.mode} | to_json }}'
+    icon: mdi:information-outline
   binary_sensor:
   - name: Mưa
     unique_id: dryer_rain
@@ -106,6 +156,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.rain else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:weather-rainy
   - name: Trời tối
     unique_id: dryer_dark
     default_entity_id: binary_sensor.dryer_dark
@@ -115,6 +166,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.dark else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:weather-night
   - name: Cảnh báo độ ẩm cao
     unique_id: dryer_humidity_warning
     default_entity_id: binary_sensor.dryer_humidity_warning
@@ -124,6 +176,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.humidity_warning else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:water-alert
   - name: Độ ẩm nguy hiểm
     unique_id: dryer_humidity_danger
     default_entity_id: binary_sensor.dryer_humidity_danger
@@ -133,6 +186,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.humidity_danger else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:water-alert-outline
   - name: Cảm biến nhiệt độ và độ ẩm
     unique_id: dryer_dht_valid
     default_entity_id: binary_sensor.dryer_dht_valid
@@ -142,6 +196,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.dht_valid else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:thermometer-check
   - name: Hành trình đóng
     unique_id: dryer_limit_closed
     default_entity_id: binary_sensor.dryer_limit_closed
@@ -151,6 +206,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.limit_covered else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:arrow-collapse-horizontal
   - name: Hành trình mở
     unique_id: dryer_limit_open
     default_entity_id: binary_sensor.dryer_limit_open
@@ -160,6 +216,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.limit_open else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:arrow-expand-horizontal
   - name: Lỗi hành trình
     unique_id: dryer_limit_fault
     default_entity_id: binary_sensor.dryer_limit_fault
@@ -169,6 +226,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.limit_fault else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:map-marker-alert
   - name: Điều kiện mở bạt
     unique_id: dryer_safe_to_open
     default_entity_id: binary_sensor.dryer_safe_to_open
@@ -178,6 +236,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.safe_to_open else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:shield-check
   - name: Dừng khẩn
     unique_id: dryer_estop
     default_entity_id: binary_sensor.dryer_estop
@@ -187,6 +246,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.estop else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:stop-circle-outline
   - name: Lỗi bộ điều khiển motor
     unique_id: dryer_driver_fault
     default_entity_id: binary_sensor.dryer_driver_fault
@@ -196,6 +256,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.driver_fault else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:engine-off
   - name: Đầu ra motor
     unique_id: dryer_motor_output_enabled
     default_entity_id: binary_sensor.dryer_motor_output_enabled
@@ -205,6 +266,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.motor_output_enabled else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:power-plug
   - name: Hoạt động motor
     unique_id: dryer_motor_active
     default_entity_id: binary_sensor.dryer_motor_active
@@ -214,6 +276,7 @@ mqtt:
     value_template: '{{ ''ON'' if value_json.motor_active else ''OFF'' }}'
     payload_on: 'ON'
     payload_off: 'OFF'
+    icon: mdi:engine
   - name: Kết nối thiết bị
     unique_id: dryer_online
     default_entity_id: binary_sensor.dryer_online
@@ -336,6 +399,15 @@ template:
       data:
         command: STOP
 - sensor:
+  - name: Mức an toàn
+    unique_id: dryer_safety_status_text
+    default_entity_id: sensor.dryer_safety_status_text
+    state: '{% set value = states(''sensor.dryer_safety_status'') %}{% if not is_state(''binary_sensor.dryer_online'',''on'')
+      %}Mất kết nối{% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{%
+      else %}{{ {''SAFE'': ''An toàn / đủ điều kiện mở'', ''WARNING'': ''Cảnh báo'',
+      ''DANGER'': ''Nguy hiểm hoặc có lỗi'', ''WAITING'': ''Đang chờ đủ thời gian
+      an toàn''}.get(value, ''Chưa có dữ liệu'') }}{% endif %}'
+    icon: mdi:shield-check
   - name: Chế độ điều khiển
     unique_id: dryer_mode_text
     default_entity_id: sensor.dryer_mode_text
@@ -344,6 +416,7 @@ template:
       else %}{{ {''AUTO'': ''Tự động'', ''STOPPED'': ''Đang dừng'', ''MANUAL_OPEN'':
       ''Thủ công: mở bạt'', ''MANUAL_CLOSE'': ''Thủ công: đóng bạt''}.get(value, ''Chưa
       có dữ liệu'') }}{% endif %}'
+    icon: mdi:autorenew
   - name: Lệnh chuyển động
     unique_id: dryer_motion_text
     default_entity_id: sensor.dryer_motion_text
@@ -352,6 +425,7 @@ template:
       else %}{{ {''IDLE'': ''Đứng yên'', ''OPENING'': ''Yêu cầu mở bạt'', ''CLOSING'':
       ''Yêu cầu đóng bạt'', ''REVERSAL_WAIT'': ''Chờ đổi chiều'', ''FAULT'': ''Dừng
       do lỗi''}.get(value, ''Chưa có dữ liệu'') }}{% endif %}'
+    icon: mdi:swap-vertical
   - name: Tình trạng lỗi
     unique_id: dryer_fault_text
     default_entity_id: sensor.dryer_fault_text
@@ -361,6 +435,7 @@ template:
       ''BOTH_LIMITS'': ''Hai hành trình cùng bật'', ''MOTION_TIMEOUT'': ''Quá thời
       gian di chuyển'', ''DRIVER_FAULT'': ''Bộ điều khiển motor báo lỗi''}.get(value,
       ''Chưa có dữ liệu'') }}{% endif %}'
+    icon: mdi:shield-alert
   - name: Đề xuất theo thời tiết
     unique_id: dryer_cover_request_text
     default_entity_id: sensor.dryer_cover_request_text
@@ -368,15 +443,29 @@ template:
       %}Mất kết nối{% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{%
       else %}{{ {''OPEN'': ''Mở bạt'', ''CLOSE'': ''Đóng bạt''}.get(value, ''Chưa
       có dữ liệu'') }}{% endif %}'
+    icon: mdi:awning
   - name: Nguyên nhân đề xuất
     unique_id: dryer_cover_reason_text
     default_entity_id: sensor.dryer_cover_reason_text
-    state: '{% set value = states(''sensor.dryer_cover_reason'') %}{% if not is_state(''binary_sensor.dryer_online'',''on'')
-      %}Mất kết nối{% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{%
-      else %}{{ {''NORMAL'': ''Điều kiện bình thường'', ''RAIN'': ''Có mưa'', ''DARK'':
-      ''Trời tối'', ''DHT_ERROR'': ''Lỗi cảm biến nhiệt độ/độ ẩm'', ''HUMIDITY_WARNING'':
-      ''Độ ẩm cao'', ''HUMIDITY_DANGER'': ''Độ ẩm nguy hiểm''}.get(value, ''Chưa có
+    state: '{% set value = states(''sensor.dryer_cover_reason'') %}
+
+      {% if not is_state(''binary_sensor.dryer_online'',''on'') %}Mất kết nối
+
+      {% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu
+
+      {% elif value in [''NORMAL'',''WAITING_SAFE''] and is_state(''sensor.dryer_cover_request'',''CLOSE'')
+      %}
+
+      Đang chờ đủ 10 giây an toàn{% if has_value(''sensor.dryer_open_wait_remaining'')
+      and states(''sensor.dryer_open_wait_remaining'') | int(-1) > 0 %} · còn {{ states(''sensor.dryer_open_wait_remaining'')
+      | int }} giây{% endif %}
+
+      {% else %}{{ {''NORMAL'': ''Điều kiện bình thường'', ''WAITING_SAFE'': ''Đang
+      chờ đủ 10 giây an toàn'', ''RAIN'': ''Có mưa'', ''DARK'': ''Trời tối'', ''DHT_ERROR'':
+      ''Lỗi cảm biến nhiệt độ/độ ẩm'', ''HUMIDITY_WARNING'': ''Độ ẩm cao · chỉ đề
+      xuất đóng'', ''HUMIDITY_DANGER'': ''Độ ẩm nguy hiểm''}.get(value, ''Chưa có
       dữ liệu'') }}{% endif %}'
+    icon: mdi:weather-partly-cloudy
   - name: Kết quả yêu cầu gần nhất
     unique_id: dryer_command_result_text
     default_entity_id: sensor.dryer_command_result_text
@@ -395,15 +484,17 @@ template:
       ''Từ chối: dừng khẩn đang kích hoạt'', ''REJECTED_BOTH_LIMITS'': ''Từ chối:
       hai hành trình cùng kích hoạt'', ''REJECTED_DRIVER_FAULT'': ''Từ chối: bộ điều
       khiển motor báo lỗi'', ''REJECTED_OPEN_UNSAFE'': ''Chưa thể mở: cần khô, sáng,
-      DHT tốt, độ ẩm dưới 70% liên tục 30 giây'', ''REJECTED_TASK_UNAVAILABLE'': ''Từ
+      DHT tốt, độ ẩm dưới 70% liên tục 10 giây'', ''REJECTED_TASK_UNAVAILABLE'': ''Từ
       chối: tác vụ điều khiển motor chưa sẵn sàng''}.get(value, ''Chưa có dữ liệu'')
       }}{% endif %}'
+    icon: mdi:message-check-outline
   - name: Kết nối thiết bị
     unique_id: dryer_online_text
     default_entity_id: sensor.dryer_online_text
     state: '{% set value = states(''binary_sensor.dryer_online'') %}{{ {''on'': ''Đã
       kết nối'', ''off'': ''Mất kết nối'', ''unknown'': ''Chưa có dữ liệu'', ''unavailable'':
       ''Mất kết nối''}.get(value, ''Chưa có dữ liệu'') }}'
+    icon: mdi:lan-connect
   - name: Mưa
     unique_id: dryer_rain_text
     default_entity_id: sensor.dryer_rain_text
@@ -411,6 +502,7 @@ template:
       %}Mất kết nối{% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{%
       else %}{{ {''on'': ''Có mưa'', ''off'': ''Không mưa''}.get(value, ''Chưa có
       dữ liệu'') }}{% endif %}'
+    icon: mdi:weather-rainy
   - name: Trời tối
     unique_id: dryer_dark_text
     default_entity_id: sensor.dryer_dark_text
@@ -418,6 +510,7 @@ template:
       %}Mất kết nối{% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{%
       else %}{{ {''on'': ''Trời tối'', ''off'': ''Trời sáng''}.get(value, ''Chưa có
       dữ liệu'') }}{% endif %}'
+    icon: mdi:weather-night
   - name: Cảm biến nhiệt độ và độ ẩm
     unique_id: dryer_dht_valid_text
     default_entity_id: sensor.dryer_dht_valid_text
@@ -425,6 +518,7 @@ template:
       %}Mất kết nối{% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{%
       else %}{{ {''on'': ''Hoạt động bình thường'', ''off'': ''Cảm biến báo lỗi''}.get(value,
       ''Chưa có dữ liệu'') }}{% endif %}'
+    icon: mdi:thermometer-check
   - name: Điều kiện mở bạt
     unique_id: dryer_safe_to_open_text
     default_entity_id: sensor.dryer_safe_to_open_text
@@ -433,6 +527,7 @@ template:
       [''unknown'',''unavailable''] %}Chưa có dữ liệu{% else %}{{ {''on'': ''Đủ điều
       kiện mở bạt'', ''off'': ''Chưa đủ điều kiện mở bạt''}.get(value, ''Chưa có dữ
       liệu'') }}{% endif %}'
+    icon: mdi:shield-check
   - name: Hành trình đóng
     unique_id: dryer_limit_closed_text
     default_entity_id: sensor.dryer_limit_closed_text
@@ -441,6 +536,7 @@ template:
       [''unknown'',''unavailable''] %}Chưa có dữ liệu{% else %}{{ {''on'': ''Đã tới
       vị trí đóng'', ''off'': ''Chưa kích hoạt''}.get(value, ''Chưa có dữ liệu'')
       }}{% endif %}'
+    icon: mdi:arrow-collapse-horizontal
   - name: Hành trình mở
     unique_id: dryer_limit_open_text
     default_entity_id: sensor.dryer_limit_open_text
@@ -449,6 +545,7 @@ template:
       [''unknown'',''unavailable''] %}Chưa có dữ liệu{% else %}{{ {''on'': ''Đã tới
       vị trí mở'', ''off'': ''Chưa kích hoạt''}.get(value, ''Chưa có dữ liệu'') }}{%
       endif %}'
+    icon: mdi:arrow-expand-horizontal
   - name: Lỗi hành trình
     unique_id: dryer_limit_fault_text
     default_entity_id: sensor.dryer_limit_fault_text
@@ -457,6 +554,7 @@ template:
       [''unknown'',''unavailable''] %}Chưa có dữ liệu{% else %}{{ {''on'': ''Hai hành
       trình cùng bật'', ''off'': ''Không có lỗi''}.get(value, ''Chưa có dữ liệu'')
       }}{% endif %}'
+    icon: mdi:map-marker-alert
   - name: Dừng khẩn
     unique_id: dryer_estop_text
     default_entity_id: sensor.dryer_estop_text
@@ -464,6 +562,7 @@ template:
       %}Mất kết nối{% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{%
       else %}{{ {''on'': ''Đang dừng khẩn'', ''off'': ''Không kích hoạt''}.get(value,
       ''Chưa có dữ liệu'') }}{% endif %}'
+    icon: mdi:stop-circle-outline
   - name: Lỗi bộ điều khiển motor
     unique_id: dryer_driver_fault_text
     default_entity_id: sensor.dryer_driver_fault_text
@@ -472,6 +571,7 @@ template:
       [''unknown'',''unavailable''] %}Chưa có dữ liệu{% else %}{{ {''on'': ''Có lỗi
       bộ điều khiển'', ''off'': ''Không có lỗi''}.get(value, ''Chưa có dữ liệu'')
       }}{% endif %}'
+    icon: mdi:engine-off
   - name: Đầu ra motor
     unique_id: dryer_motor_output_enabled_text
     default_entity_id: sensor.dryer_motor_output_enabled_text
@@ -480,6 +580,7 @@ template:
       value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{% else %}{{ {''on'':
       ''Đã bật đầu ra'', ''off'': ''Đang khóa đầu ra''}.get(value, ''Chưa có dữ liệu'')
       }}{% endif %}'
+    icon: mdi:power-plug
   - name: Hoạt động motor
     unique_id: dryer_motor_active_text
     default_entity_id: sensor.dryer_motor_active_text
@@ -488,6 +589,7 @@ template:
       [''unknown'',''unavailable''] %}Chưa có dữ liệu{% else %}{{ {''on'': ''Đang
       cấp lệnh chạy'', ''off'': ''Đang dừng''}.get(value, ''Chưa có dữ liệu'') }}{%
       endif %}'
+    icon: mdi:engine
   - name: Cảnh báo độ ẩm cao
     unique_id: dryer_humidity_warning_text
     default_entity_id: sensor.dryer_humidity_warning_text
@@ -496,6 +598,7 @@ template:
       in [''unknown'',''unavailable''] %}Chưa có dữ liệu{% else %}{{ {''on'': ''Độ
       ẩm cao từ 70%'', ''off'': ''Không có cảnh báo''}.get(value, ''Chưa có dữ liệu'')
       }}{% endif %}'
+    icon: mdi:water-alert
   - name: Độ ẩm nguy hiểm
     unique_id: dryer_humidity_danger_text
     default_entity_id: sensor.dryer_humidity_danger_text
@@ -504,30 +607,104 @@ template:
       in [''unknown'',''unavailable''] %}Chưa có dữ liệu{% else %}{{ {''on'': ''Độ
       ẩm nguy hiểm trên 80%'', ''off'': ''Không có cảnh báo''}.get(value, ''Chưa có
       dữ liệu'') }}{% endif %}'
+    icon: mdi:water-alert-outline
   - name: Giá trị cảm biến mưa
     unique_id: dryer_rain_adc_text
     default_entity_id: sensor.dryer_rain_adc_text
     state: '{% set value = states(''sensor.dryer_rain_adc'') %}{% if not is_state(''binary_sensor.dryer_online'',''on'')
       %}Mất kết nối{% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{%
       else %}{{ {}.get(value, value) }}{% endif %}'
+    icon: mdi:weather-rainy
   - name: Giá trị cảm biến ánh sáng
     unique_id: dryer_light_adc_text
     default_entity_id: sensor.dryer_light_adc_text
     state: '{% set value = states(''sensor.dryer_light_adc'') %}{% if not is_state(''binary_sensor.dryer_online'',''on'')
       %}Mất kết nối{% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{%
       else %}{{ {}.get(value, value) }}{% endif %}'
+    icon: mdi:brightness-6
   - name: Vị trí bạt
     unique_id: dryer_roof_position_text
     default_entity_id: sensor.dryer_roof_position_text
     state: '{% set value = states(''sensor.dryer_roof_position'') %}{% if not is_state(''binary_sensor.dryer_online'',''on'')
       %}Mất kết nối{% elif value in [''unknown'',''unavailable''] %}Chưa có dữ liệu{%
       else %}{{ {}.get(value, value) }}{% endif %}'
+    icon: mdi:awning-outline
   - name: Chế độ tự động
     unique_id: dryer_auto_status
     default_entity_id: sensor.dryer_auto_status
     state: '{% if not is_state(''binary_sensor.dryer_online'',''on'') or not has_value(''sensor.dryer_mode'')
       %}Chưa xác nhận{% elif is_state(''sensor.dryer_mode'',''AUTO'') %}Đang bật{%
       else %}Đang tắt{% endif %}'
+    icon: mdi:autorenew
+  - name: Chờ điều kiện mở bạt
+    unique_id: dryer_open_wait_status
+    default_entity_id: sensor.dryer_open_wait_status
+    state: '{% if not is_state(''binary_sensor.dryer_online'',''on'') %}
+
+      Mất kết nối · chưa xác nhận
+
+      {% elif not has_value(''sensor.dryer_mode'') or not has_value(''sensor.dryer_fault'')
+      %}
+
+      Chưa có dữ liệu
+
+      {% elif not is_state(''sensor.dryer_fault'',''NONE'') or is_state(''binary_sensor.dryer_estop'',''on'')
+      or is_state(''binary_sensor.dryer_driver_fault'',''on'') %}
+
+      Đang có lỗi · chưa thể mở
+
+      {% elif not is_state(''sensor.dryer_mode'',''AUTO'') %}
+
+      AUTO đang tắt
+
+      {% elif is_state(''binary_sensor.dryer_rain'',''on'') %}
+
+      Chưa đếm: có mưa
+
+      {% elif is_state(''binary_sensor.dryer_dark'',''on'') %}
+
+      Chưa đếm: trời tối
+
+      {% elif not is_state(''binary_sensor.dryer_dht_valid'',''on'') %}
+
+      Chưa đếm: DHT lỗi hoặc chưa có dữ liệu
+
+      {% elif states(''sensor.dryer_humidity'') | float(100) >= 70 %}
+
+      Chưa đếm: độ ẩm từ 70%
+
+      {% elif not has_value(''sensor.dryer_open_wait_remaining'') %}
+
+      Chờ dữ liệu thời gian từ ESP32
+
+      {% elif is_state(''binary_sensor.dryer_safe_to_open'',''on'') %}
+
+      Đủ điều kiện mở bạt
+
+      {% else %}
+
+      {% set remaining = states(''sensor.dryer_open_wait_remaining'') | int(10) %}
+
+      {% if remaining > 0 %}Còn {{ remaining }} giây · đã ổn định {{ 10 - remaining
+      }}/10 giây{% else %}Chưa xác nhận đủ điều kiện{% endif %}
+
+      {% endif %}'
+    icon: mdi:timer-sand
+  - name: Cảnh báo độ ẩm
+    unique_id: dryer_humidity_alert_text
+    default_entity_id: sensor.dryer_humidity_alert_text
+    state: '{% if not is_state(''binary_sensor.dryer_online'',''on'') %}Mất kết nối
+
+      {% elif not is_state(''binary_sensor.dryer_dht_valid'',''on'') or not has_value(''sensor.dryer_humidity'')
+      %}Dữ liệu độ ẩm không hợp lệ
+
+      {% elif states(''sensor.dryer_humidity'') | float(0) > 80 %}Nguy hiểm (trên
+      80%)
+
+      {% elif states(''sensor.dryer_humidity'') | float(0) >= 70 %}Độ ẩm cao (70–80%)
+
+      {% else %}Không có cảnh báo{% endif %}'
+    icon: mdi:water-alert
   binary_sensor:
   - name: Tự động đang bật
     unique_id: dryer_auto_enabled
@@ -537,74 +714,67 @@ template:
     state: '{{ is_state(''sensor.dryer_mode'',''AUTO'') }}'
     icon: mdi:autorenew
 automation:
-- id: dryer_rain
-  alias: Giàn phơi - Phát hiện mưa
-  mode: single
+- id: dryer_decision_changed
+  alias: Giàn phơi - đề xuất hoặc điều kiện an toàn thay đổi
+  mode: queued
+  max: 50
   triggers:
   - trigger: state
-    entity_id: binary_sensor.dryer_rain
-    to: 'on'
+    entity_id: sensor.dryer_decision
+    to: null
+  conditions:
+  - condition: template
+    value_template: '{{ trigger.to_state is not none and trigger.to_state.state not
+      in [''unknown'',''unavailable'',''''] and (trigger.from_state is none or trigger.from_state.state
+      != trigger.to_state.state) }}'
   actions:
   - action: persistent_notification.create
     data:
-      notification_id: dryer_rain
-      title: Phát hiện mưa
-      message: ESP32 phát hiện mưa. Chế độ AUTO sẽ yêu cầu che bạt; kiểm tra hành
-        trình để biết vị trí thực tế.
-- id: dryer_humidity_warning
-  alias: Giàn phơi - Độ ẩm cao
-  mode: single
-  triggers:
-  - trigger: state
-    entity_id: binary_sensor.dryer_humidity_warning
-    to: 'on'
-  actions:
-  - action: persistent_notification.create
-    data:
-      notification_id: dryer_humidity_warning
-      title: Độ ẩm cao
-      message: Độ ẩm từ 70% trở lên. Chưa đủ điều kiện mở bạt; theo dõi hiệu quả phơi.
-- id: dryer_humidity_danger
-  alias: Giàn phơi - Độ ẩm nguy hiểm
-  mode: single
-  triggers:
-  - trigger: state
-    entity_id: binary_sensor.dryer_humidity_danger
-    to: 'on'
-  actions:
-  - action: persistent_notification.create
-    data:
-      notification_id: dryer_humidity_danger
-      title: Độ ẩm nguy hiểm
-      message: Độ ẩm trên 80%. ESP32 cấm mở và AUTO yêu cầu che bạt.
-- id: dryer_limit_fault
-  alias: Giàn phơi - Lỗi công tắc hành trình
-  mode: single
-  triggers:
-  - trigger: state
-    entity_id: binary_sensor.dryer_limit_fault
-    to: 'on'
-  actions:
-  - action: persistent_notification.create
-    data:
-      notification_id: dryer_limit_fault
-      title: Lỗi công tắc hành trình
-      message: Hai công tắc đóng và mở cùng kích hoạt. ESP32 chốt lỗi, cần kiểm tra
-        đấu dây và cơ khí trước RESET.
-- id: dryer_dht_error
-  alias: Giàn phơi - Lỗi DHT22
-  mode: single
-  triggers:
-  - trigger: state
-    entity_id: binary_sensor.dryer_dht_valid
-    to: 'off'
-  actions:
-  - action: persistent_notification.create
-    data:
-      notification_id: dryer_dht_error
-      title: Lỗi DHT22
-      message: Số đo DHT22 không hợp lệ. Không dùng số đo cuối làm dữ liệu hiện tại;
-        ESP32 cấm mở.
+      title: Giàn phơi · cập nhật đề xuất và an toàn
+      message: '{% set a = trigger.to_state.attributes %}
+
+        Đề xuất: {{ {''OPEN'':''Mở bạt'',''CLOSE'':''Đóng bạt''}.get(a.cover_request,
+        ''Chưa xác nhận'') }}.
+
+        Nguyên nhân: {{ {''NORMAL'':''Điều kiện bình thường'',''WAITING_SAFE'':''Đang
+        chờ đủ 10 giây an toàn'',''RAIN'':''Có mưa'',''DARK'':''Trời tối'',''DHT_ERROR'':''Lỗi
+        cảm biến DHT'',''HUMIDITY_WARNING'':''Độ ẩm cao 70–80%'',''HUMIDITY_DANGER'':''Độ
+        ẩm nguy hiểm trên 80%''}.get(a.cover_reason, a.cover_reason) }}.
+
+        Mức an toàn: {{ {''SAFE'':''An toàn / đủ điều kiện mở'',''WARNING'':''Cảnh
+        báo'',''DANGER'':''Nguy hiểm hoặc đang có lỗi'',''WAITING'':''Đang chờ đủ
+        thời gian an toàn''}.get(a.safety_status, a.safety_status) }}.
+
+        Độ ẩm: {{ (a.humidity_pct | string + ''%'') if a.dht_valid else ''Không hợp
+        lệ'' }}.
+
+        {% if a.cover_reason == ''HUMIDITY_WARNING'' %}
+
+        Chỉ đề xuất đóng bạt. Hệ thống không tự đóng chỉ vì độ ẩm 70–80%; bạn có thể
+        nhấn Đóng bạt để xác nhận.
+
+        {% elif a.mode == ''AUTO'' %}
+
+        AUTO đang bật; thiết bị điều khiển theo điều kiện an toàn và hành trình.
+
+        {% else %}
+
+        AUTO đang tắt. Đề xuất này không tự thực hiện chuyển động.
+
+        {% endif %}
+
+        {% if a.fault != ''NONE'' %}Lỗi thiết bị: {{ a.fault }}.{% endif %}
+
+        {% if a.estop %}Dừng khẩn đang kích hoạt.{% endif %}
+
+        {% if a.driver_fault %}Driver motor đang báo lỗi.{% endif %}
+
+        {% if a.limit_fault %}Hai công tắc hành trình cùng kích hoạt.{% endif %}
+
+        Mưa: {{ ''Có'' if a.rain else ''Không'' }} · Ánh sáng: {{ ''Tối'' if a.dark
+        else ''Sáng'' }}.
+
+        '
 - id: dryer_offline
   alias: Giàn phơi - Giàn phơi mất kết nối
   mode: single
@@ -637,7 +807,7 @@ automation:
       title: Yêu cầu điều khiển chưa được thực hiện
       message: 'Lệnh {{ state_attr(''sensor.dryer_command_result'',''command'') }}:
         {{ states(''sensor.dryer_command_result'') }}. Mở bạt cần khô, sáng, DHT hợp
-        lệ và độ ẩm dưới 70% liên tục 30 giây; kiểm tra dừng khẩn và lỗi hành trình.
+        lệ và độ ẩm dưới 70% liên tục 10 giây; kiểm tra dừng khẩn và lỗi hành trình.
         TIMEOUT nghĩa là chưa có xác nhận, không tự gửi lại.'
   conditions:
   - condition: template

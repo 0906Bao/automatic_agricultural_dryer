@@ -12,7 +12,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: sh test/run-host.sh
-      - run: pip install platformio PyYAML
+      - run: pip install platformio PyYAML Jinja2
+      - run: python test/test_notifications.py
       - run: python tools/build-home-assistant.py --check
       - run: node tools/build-flow.cjs --check
       - run: pio run -e esp32dev -e wokwi

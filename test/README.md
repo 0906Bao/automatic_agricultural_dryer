@@ -19,4 +19,10 @@ emulator. It never sends commands to the real dryer topic. It restarts HA Core,
 so run during maintenance; requires paho-mqtt, PyYAML and a local setup account.
 
 These checks do not use a real motor, ESP32 or MQTT broker.
+`ha-status-card.test.cjs` checks icon/colour changes, stale-data handling,
+fault and waiting states, and countdown formatting in the Home Assistant card.
 See `docs/CONTROL_VI.md` for hardware acceptance scenarios.
+
+Run `python test/test_notifications.py` with PyYAML and Jinja2 installed to
+check proposal/safety transitions, suppression of repeated timer-only updates,
+and the advisory-only notification at 70–80% humidity. CI runs this check.

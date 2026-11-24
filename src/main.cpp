@@ -6,6 +6,10 @@
 #include "CoverController.h"
 #include "WeatherPolicy.h"
 #include "CommandGate.h"
+#if defined(DRYER_WOKWI_SIMULATION) && DRYER_WOKWI_SIMULATION
+#include "SimulatedCover.h"
+dryer::SimulatedCover simulatedCover;
+#endif
 #include <PubSubClient.h>
 #include "DHTesp.h"
 
@@ -41,6 +45,9 @@ const char* lastMqttCommandResult = "NONE";
 void readSafetyInputs(dryer::Inputs& in) {
   in.covered = digitalRead(LIMIT_COVERED_PIN) == LOW;
   in.open = digitalRead(LIMIT_OPEN_PIN) == LOW;
+#if defined(DRYER_WOKWI_SIMULATION) && DRYER_WOKWI_SIMULATION
+  simulatedCover.applyLimits(in);
+#endif
   in.emergency = digitalRead(ESTOP_PIN) == HIGH;
   in.driverFault = digitalRead(DRIVER_FAULT_PIN) == LOW;
 }
@@ -49,6 +56,10 @@ void motorTask(void*) {
   dryer::Output previous;
   for (;;) {
     portENTER_CRITICAL(&motorMux);
+#if defined(DRYER_WOKWI_SIMULATION) && DRYER_WOKWI_SIMULATION
+    simulatedCover.update(millis(), controller.output,
+      digitalRead(LIMIT_COVERED_PIN) == LOW, digitalRead(LIMIT_OPEN_PIN) == LOW);
+#endif
     readSafetyInputs(controlInputs);
     if (uint32_t(millis() - decisionUpdatedAt) > 10000) {
       controlInputs.autoClose = true;
@@ -137,7 +148,7 @@ void publishTelemetry() {
     const int size = snprintf(payload, sizeof(payload),
       "{\"session\":\"%s\",\"last_command_seq\":%llu,\"rain_adc\":%d,\"light_adc\":%d,"
       "\"rain\":%s,\"dark\":%s,\"temperature_c\":%.2f,\"humidity_pct\":%.2f,"
-      "\"dht_valid\":%s,\"safe_to_open\":%s,\"humidity_warning\":%s,\"humidity_danger\":%s,"
+      "\"dht_valid\":%s,\"safe_to_open\":%s,\"open_wait_remaining_s\":%d,\"humidity_warning\":%s,\"humidity_danger\":%s,"
       "\"cover_request\":\"%s\",\"cover_reason\":\"%s\","
       "\"limit_covered\":%s,\"limit_open\":%s,\"estop\":%s,\"driver_fault\":%s,"
       "\"mode\":\"%s\",\"motion\":\"%s\",\"fault\":\"%s\","
@@ -147,8 +158,9 @@ void publishTelemetry() {
       isRaining ? "true" : "false", isDark ? "true" : "false",
       dhtValid ? temperatureC : -999.0f, dhtValid ? humidityPct : -999.0f,
       dhtValid ? "true" : "false", in.safeToOpen ? "true" : "false",
+      weather.openWaitRemainingSeconds,
       dhtValid && humidityPct >= 70 ? "true" : "false",
-      dhtValid && humidityPct > 80 ? "true" : "false", weather.close ? "CLOSE" : "OPEN",
+      dhtValid && humidityPct > 80 ? "true" : "false", weather.recommendClose ? "CLOSE" : "OPEN",
       weather.reason, in.covered ? "true" : "false", in.open ? "true" : "false",
       in.emergency ? "true" : "false", in.driverFault ? "true" : "false",
       dryer::name(state.mode), dryer::name(state.motion), dryer::name(state.fault),
@@ -160,7 +172,7 @@ void publishTelemetry() {
   }
   Serial.printf("mode=%s motion=%s fault=%s request=%s reason=%s outputs=%s\n",
     dryer::name(state.mode), dryer::name(state.motion), dryer::name(state.fault),
-    weather.close ? "CLOSE" : "OPEN", weather.reason, MOTOR_OUTPUT_ENABLED ? "ENABLED" : "LOCKED");
+    weather.recommendClose ? "CLOSE" : "OPEN", weather.reason, MOTOR_OUTPUT_ENABLED ? "ENABLED" : "LOCKED");
 }
 
 void serviceConnections() {

@@ -1,6 +1,7 @@
 #include "CoverController.h"
 #include "WeatherPolicy.h"
 #include "CommandGate.h"
+#include "SimulatedCover.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -12,6 +13,90 @@ static void start(CoverController& c, Inputs& in, Command cmd, uint32_t now = 0)
   CHECK(c.command(cmd, in)); c.tick(now, in); c.tick(now + 300, in);
 }
 int main() {
+  {
+    WeatherPolicy p; CoverController c; auto in=healthy();
+    p.update(0,false,false,true,60); p.update(30000,false,false,true,60);
+    in.open=true; in.autoClose=p.close; in.safeToOpen=p.safeToOpen; in.danger=p.danger;
+    CHECK(c.command(Command::Auto,in)); c.tick(30000,in);
+    const float levels[]={70,75,80};
+    for (int i=0;i<3;++i) {
+      p.update(31000+i*1000,false,false,true,levels[i]);
+      CHECK(p.recommendClose && !p.close && !p.danger && !p.safeToOpen);
+      CHECK(!strcmp(p.reason,"HUMIDITY_WARNING"));
+      in.autoClose=p.close; in.safeToOpen=p.safeToOpen; in.danger=p.danger;
+      c.tick(31000+i*1000,in); CHECK(!c.output.enable && c.mode==Mode::Auto);
+    }
+    // Danger still requests automatic closing after its normal debounce.
+    p.update(34000,false,false,true,81); CHECK(p.recommendClose && p.danger);
+    p.update(34500,false,false,true,81); CHECK(p.close);
+    in.autoClose=p.close; in.danger=p.danger;
+    c.tick(34500,in); c.tick(34800,in); CHECK(c.output.enable && c.output.in2);
+    // Returning below 70% requires a fresh full safe period before reopening.
+    p.update(35000,false,false,true,60); CHECK(p.recommendClose);
+    p.update(44999,false,false,true,60); CHECK(!p.safeToOpen);
+    p.update(45000,false,false,true,60); CHECK(!p.recommendClose && !p.close && p.safeToOpen);
+  }
+  {
+    WeatherPolicy p;
+    CHECK(p.openWaitRemainingSeconds == -1);
+    p.update(0, false, false, true, 60); CHECK(p.openWaitRemainingSeconds == 10);
+    CHECK(p.close && !strcmp(p.reason, "WAITING_SAFE"));
+    p.update(999, false, false, true, 60); CHECK(p.openWaitRemainingSeconds == 10);
+    p.update(1000, false, false, true, 60); CHECK(p.openWaitRemainingSeconds == 9);
+    p.update(9999, false, false, true, 60); CHECK(p.openWaitRemainingSeconds == 1 && !p.safeToOpen);
+    p.update(10000, false, false, true, 60); CHECK(p.openWaitRemainingSeconds == 0 && p.safeToOpen);
+    CHECK(!p.close && !strcmp(p.reason, "NORMAL"));
+    p.update(30001, true, false, true, 60); CHECK(p.openWaitRemainingSeconds == -1);
+    CHECK(!strcmp(p.reason, "RAIN"));
+    p.update(31000, false, false, true, 60); CHECK(p.openWaitRemainingSeconds == 10);
+    p.update(32000, false, true, true, 60); CHECK(p.openWaitRemainingSeconds == -1);
+    p.update(33000, false, false, true, 70); CHECK(p.openWaitRemainingSeconds == -1);
+    p.update(34000, false, false, false, 0); CHECK(p.openWaitRemainingSeconds == -1);
+    const uint32_t t = UINT32_MAX - 500;
+    p.update(t, false, false, true, 60);
+    p.update(t + 1000, false, false, true, 60); CHECK(p.openWaitRemainingSeconds == 9);
+    p.update(t + 10000, false, false, true, 60); CHECK(p.openWaitRemainingSeconds == 0);
+  }
+  {
+    // End-to-end AUTO cycle without manually pressing Wokwi end stops.
+    WeatherPolicy weather; CoverController c; SimulatedCover cover;
+    auto in = healthy();
+    CHECK(c.command(Command::Auto, in));
+    for (uint32_t now = 0; now <= 90000; now += 5) {
+      const bool rain = now >= 40000 && now < 50000;
+      weather.update(now, rain, false, true, 60);
+      cover.update(now, c.output, false, false);
+      in.covered = in.open = false;
+      cover.applyLimits(in);
+      in.autoClose = weather.close;
+      in.safeToOpen = weather.safeToOpen;
+      in.danger = weather.danger;
+      c.tick(now, in);
+      CHECK(c.mode == Mode::Auto && c.fault == Fault::None);
+      if (now == 9000 || now == 46000) CHECK(in.covered && !c.output.enable);
+      if (now == 16000 || now == 66000) CHECK(in.open && !c.output.enable);
+      if (now == 41000) CHECK(c.output.enable && c.output.in2);
+    }
+  }
+  {
+    SimulatedCover cover(1000); Inputs in;
+    Output opening; opening.enable = opening.in1 = true;
+    const uint32_t startAt = UINT32_MAX - 200;
+    cover.update(startAt, opening, false, false);
+    cover.update(startAt + 250, opening, false, false);
+    cover.update(startAt + 10000, Output{}, false, false);
+    cover.applyLimits(in); CHECK(!in.covered && !in.open); // STOP keeps partial position
+    Output closing; closing.enable = closing.in2 = true;
+    cover.update(startAt + 10749, closing, false, false);
+    cover.applyLimits(in); CHECK(!in.covered && !in.open);
+    cover.update(startAt + 10750, closing, false, false);
+    cover.applyLimits(in); CHECK(in.covered && !in.open);
+    in = Inputs{};
+    cover.update(startAt + 10751, Output{}, false, true);
+    cover.applyLimits(in); CHECK(in.open && !in.covered); // manual endpoint
+    in.covered = in.open = true;
+    cover.applyLimits(in); CHECK(in.covered && in.open); // preserve fault injection
+  }
   {
     CoverController c(1000); auto in = healthy();
     start(c, in, Command::Auto); c.tick(1300, in);
@@ -73,32 +158,32 @@ int main() {
   }
   {
     WeatherPolicy p; CHECK(p.close);
-    p.update(0, false, false, true, 60); p.update(29999, false, false, true, 60); CHECK(p.close);
-    p.update(30000, false, false, true, 60); CHECK(!p.close);
+    p.update(0, false, false, true, 60); p.update(9999, false, false, true, 60); CHECK(p.close);
+    p.update(10000, false, false, true, 60); CHECK(!p.close);
     p.update(30001, true, false, true, 60); p.update(30500, true, false, true, 60); CHECK(!p.close);
     p.update(30501, true, false, true, 60); CHECK(p.close);
     p.update(31000, false, false, true, 60); p.update(50000, false, false, true, 75);
-    p.update(60000, false, false, true, 60); p.update(89999, false, false, true, 60); CHECK(p.close);
-    p.update(90000, false, false, true, 60); CHECK(!p.close);
+    p.update(60000, false, false, true, 60); p.update(69999, false, false, true, 60); CHECK(p.close);
+    p.update(70000, false, false, true, 60); CHECK(!p.close);
     p.update(90001, false, false, true, 80); CHECK(!p.danger && !p.safeToOpen);
     p.update(90002, false, false, true, 81); CHECK(p.danger);
     p.update(90502, false, false, true, 81); CHECK(p.close);
     p.update(90503, false, false, false, 0); CHECK(p.danger && !p.safeToOpen);
     WeatherPolicy wrap; uint32_t t = UINT32_MAX - 100;
-    wrap.update(t, false, false, true, 60); wrap.update(t + 30000, false, false, true, 60);
+    wrap.update(t, false, false, true, 60); wrap.update(t + 10000, false, false, true, 60);
     CHECK(!wrap.close);
   }
   {
     WeatherPolicy p; CoverController c; auto in=healthy();
     p.update(100, false, false, true, 60); in.safeToOpen=p.safeToOpen;
     CHECK(!c.command(Command::Open,in));
-    p.update(30099, false, false, true, 60); CHECK(!p.safeToOpen);
-    p.update(30100, false, false, true, 60); in.safeToOpen=p.safeToOpen;
+    p.update(10099, false, false, true, 60); CHECK(!p.safeToOpen);
+    p.update(10100, false, false, true, 60); in.safeToOpen=p.safeToOpen;
     CHECK(p.safeToOpen); CHECK(c.command(Command::Open,in));
     p.update(30101,true,false,true,60); CHECK(!p.safeToOpen);
     p.update(30102,false,false,true,60); CHECK(!p.safeToOpen);
-    p.update(60101,false,false,true,60); CHECK(!p.safeToOpen);
-    p.update(60102,false,false,true,60); CHECK(p.safeToOpen);
+    p.update(40101,false,false,true,60); CHECK(!p.safeToOpen);
+    p.update(40102,false,false,true,60); CHECK(p.safeToOpen);
     p.update(60103,false,false,false,0); CHECK(!p.safeToOpen);
     p.update(60104,false,false,true,75); CHECK(!p.safeToOpen);
     p.update(60105,false,true,true,60); CHECK(!p.safeToOpen);

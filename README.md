@@ -8,7 +8,7 @@ Các chức năng chính:
 
 - Giám sát môi trường và gửi dữ liệu, trạng thái thiết bị qua MQTT.
 - Tự động yêu cầu đóng mái khi có mưa, trời tối, độ ẩm trên 80% hoặc DHT lỗi, sau khi xác nhận điều kiện nguy hiểm trong 500 ms.
-- Chỉ cho phép mở sau 30 giây liên tục không mưa, đủ sáng, DHT hợp lệ và độ ẩm dưới 70%. Quy tắc này áp dụng cả cho lệnh mở thủ công.
+- Chỉ cho phép mở sau 10 giây liên tục không mưa, đủ sáng, DHT hợp lệ và độ ẩm dưới 70%. Quy tắc này áp dụng cả cho lệnh mở thủ công.
 - Điều khiển bằng các lệnh `AUTO`, `OPEN`, `CLOSE`, `STOP`, `RESET` trên dashboard.
 - Giám sát hành trình đóng/mở, dừng khẩn, lỗi driver và thời gian chạy motor (mặc định tối đa 20 giây).
 - Theo dõi bằng Node-RED, tích hợp Home Assistant OS trên VMware và mô phỏng bằng Wokwi.
@@ -83,7 +83,7 @@ Broker mặc định cho phép kết nối không xác thực, dành cho thử n
 4. Mở Command Palette (`F1`), chọn **Wokwi: Start Simulator**. `wokwi.toml` đã trỏ đến firmware trong `.pio/build/wokwi/`.
 5. Mở dashboard Node-RED để xem dữ liệu và điều khiển. Sau mỗi lần build lại, dừng rồi khởi động lại mô phỏng để dùng firmware mới.
 
-Trong mô phỏng, công tắc **LIMIT CLOSE / LIMIT OPEN** ở bên trái là chưa chạm, bên phải là đã chạm; công tắc dừng khẩn ở bên trái là bình thường. Môi trường `wokwi` bật GPIO motor để thử bằng LED mô phỏng.
+Trong mô phỏng, công tắc **LIMIT CLOSE / LIMIT OPEN** ở bên trái là chưa chạm, bên phải là đã chạm; công tắc dừng khẩn ở bên trái là bình thường. Môi trường `wokwi` bật GPIO motor để thử bằng LED và tự mô phỏng hành trình (5 giây cho toàn hành trình). Để cả LIMIT CLOSE / LIMIT OPEN bên trái khi chạy tự động; không cần gạt công tắc mỗi lần mở/đóng. AUTO giữ bật khi tới đích và tự đóng khi mưa; công tắc vẫn dùng để ép vị trí khi thử thủ công. Bản `esp32dev` chỉ dùng hành trình vật lý.
 
 ### 2.5. Chạy trên ESP32 thật
 
