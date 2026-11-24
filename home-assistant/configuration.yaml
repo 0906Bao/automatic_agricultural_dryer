@@ -1,0 +1,27 @@
+# HAOS configuration. MQTT credentials are added through the MQTT integration UI.
+default_config:
+
+homeassistant:
+  name: Giàn phơi nông sản
+  time_zone: Asia/Ho_Chi_Minh
+  packages: !include_dir_named packages
+
+lovelace:
+  mode: storage
+  dashboards:
+    dryer-dashboard:
+      mode: yaml
+      title: Giàn phơi
+      icon: mdi:sprout
+      show_in_sidebar: true
+      filename: dashboards/dryer.yaml
+
+recorder:
+  purge_keep_days: 14
+  auto_purge: true
+  commit_interval: 10
+  include:
+    entity_globs:
+      - sensor.dryer_*
+      - binary_sensor.dryer_*
+      - cover.dryer_*

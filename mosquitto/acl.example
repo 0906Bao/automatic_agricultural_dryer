@@ -1,0 +1,23 @@
+# No passwords here. Usernames must match your locally provisioned accounts.
+user dryer-esp
+topic write dryer/telemetry
+topic write dryer/status
+topic write dryer/availability
+topic read dryer/command
+
+user dryer-nodered
+topic read dryer/telemetry
+topic read dryer/availability
+topic read dryer/status
+topic read dryer/ha/command
+topic write dryer/command
+topic write dryer/ha/state
+topic write dryer/ha/availability
+topic write dryer/ha/heartbeat
+topic write dryer/ha/command_result
+
+user dryer-homeassistant
+topic read dryer/ha/#
+topic write dryer/ha/command
+topic write homeassistant/status
+topic read homeassistant/#

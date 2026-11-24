@@ -2,421 +2,239 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include "secrets.h"
+#include "hardware.h"
+#include "CoverController.h"
+#include "WeatherPolicy.h"
+#include "CommandGate.h"
 #include <PubSubClient.h>
 #include "DHTesp.h"
-#include <BlynkSimpleEsp32.h>
 
-// Existing Wokwi wiring
-constexpr uint8_t RAIN_PIN = 34;
-constexpr uint8_t LDR_PIN = 35;
-constexpr uint8_t DHT_PIN = 15;
-constexpr uint8_t LIMIT_COVERED_PIN = 18;
-constexpr uint8_t LIMIT_OPEN_PIN = 19;
-constexpr uint8_t STATUS_LED_PIN = 23;
-
-constexpr int RAIN_WET_THRESHOLD = 2200;
-constexpr int DARK_THRESHOLD = 2200;
-constexpr int BRIGHT_THRESHOLD = 1800;
-constexpr uint32_t SAMPLE_INTERVAL_MS = 250;
-constexpr uint32_t SENSOR_CONFIRM_MS = 500;
-constexpr uint32_t SAFE_TO_OPEN_MS = 30000;
-constexpr uint32_t REPORT_INTERVAL_MS = 1000;
-constexpr uint32_t DHT_INTERVAL_MS = 2500;
-constexpr uint32_t MQTT_RECONNECT_INTERVAL_MS = 5000;
-constexpr uint32_t BLYNK_RECONNECT_INTERVAL_MS = 5000;
-constexpr uint8_t AVERAGE_SAMPLES = 8;
-
-// Humidity thresholds (%RH)
-constexpr float HUMIDITY_WARNING_THRESHOLD = 70.0f;
-constexpr float HUMIDITY_DANGER_THRESHOLD = 80.0f;
-
-// Thời gian xác nhận điều kiện nguy hiểm
-constexpr uint32_t HUMIDITY_CONFIRM_MS = 500;
-
-bool dhtValid = false;
-
-// Lý do che bạt để gửi lên dashboard
-const char* coverReason = "NORMAL";
-
-// MQTT topics
+constexpr uint8_t RAIN_PIN = 34, LDR_PIN = 35, DHT_PIN = 15;
+constexpr uint8_t LIMIT_COVERED_PIN = 18, LIMIT_OPEN_PIN = 19, STATUS_LED_PIN = 23;
+constexpr int RAIN_WET_THRESHOLD = 2200, DARK_THRESHOLD = 2200, BRIGHT_THRESHOLD = 1800;
+constexpr uint32_t TELEMETRY_INTERVAL_MS = 1000;
 constexpr char TOPIC_TELEMETRY[] = "dryer/telemetry";
+constexpr char TOPIC_COMMAND[] = "dryer/command";
 constexpr char TOPIC_STATUS[] = "dryer/status";
 constexpr char TOPIC_AVAILABILITY[] = "dryer/availability";
 
 WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 DHTesp dht;
-BlynkTimer blynkTimer;
+dryer::WeatherPolicy weather;
+dryer::CoverController controller(MOTOR_TRAVEL_TIMEOUT_MS);
+dryer::CommandGate commandGate;
+portMUX_TYPE motorMux = portMUX_INITIALIZER_UNLOCKED;
+dryer::Inputs controlInputs;
+bool motorTaskReady = false;
+bool dhtValid = false, isDark = false, isRaining = false;
+int rainRaw = 0, lightRaw = 0;
+float temperatureC = NAN, humidityPct = NAN;
+uint32_t lastDhtAt = 0, lastSampleAt = 0, lastReportAt = 0;
+uint32_t lastMqttReconnectAt = 0, lastWifiRetry = 0;
+uint32_t decisionUpdatedAt = 0;
+char sessionId[9];
+const char* commandResult = "BOOT_STOPPED";
+const char* lastMqttCommandResult = "NONE";
 
-bool isDark = false;
-bool coverRequested = false;
-bool coverConditionTiming = false;
-bool safeConditionTiming = false;
-bool blynkConfigured = false;
-uint32_t coverConditionSince = 0;
-uint32_t safeConditionSince = 0;
-uint32_t lastSampleAt = 0;
-uint32_t lastReportAt = 0;
-uint32_t lastDhtAt = 0;
-uint32_t lastMqttReconnectAt = 0;
-uint32_t lastBlynkReconnectAt = 0;
-int rainRaw = 0;
-int lightRaw = 0;
-bool isRaining = false;
-float temperatureC = NAN;
-float humidityPct = NAN;
+// Called only inside the short critical section. No network/Serial/delays here.
+void readSafetyInputs(dryer::Inputs& in) {
+  in.covered = digitalRead(LIMIT_COVERED_PIN) == LOW;
+  in.open = digitalRead(LIMIT_OPEN_PIN) == LOW;
+  in.emergency = digitalRead(ESTOP_PIN) == HIGH;
+  in.driverFault = digitalRead(DRIVER_FAULT_PIN) == LOW;
+}
+
+void motorTask(void*) {
+  dryer::Output previous;
+  for (;;) {
+    portENTER_CRITICAL(&motorMux);
+    readSafetyInputs(controlInputs);
+    if (uint32_t(millis() - decisionUpdatedAt) > 10000) {
+      controlInputs.autoClose = true;
+      controlInputs.safeToOpen = false;
+      controlInputs.danger = true;
+    }
+    controller.tick(millis(), controlInputs);
+    const auto out = controller.output;
+    if (out.enable != previous.enable || out.in1 != previous.in1 || out.in2 != previous.in2) {
+      digitalWrite(MOTOR_ENABLE_PIN, LOW);
+      digitalWrite(MOTOR_IN1_PIN, MOTOR_OUTPUT_ENABLED && out.in1 ? HIGH : LOW);
+      digitalWrite(MOTOR_IN2_PIN, MOTOR_OUTPUT_ENABLED && out.in2 ? HIGH : LOW);
+      digitalWrite(MOTOR_ENABLE_PIN, MOTOR_OUTPUT_ENABLED && out.enable ? HIGH : LOW);
+      previous = out;
+    }
+    portEXIT_CRITICAL(&motorMux);
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+}
+
+dryer::CoverController snapshot(dryer::Inputs& in) {
+  portENTER_CRITICAL(&motorMux);
+  auto copy = controller;
+  in = controlInputs;
+  portEXIT_CRITICAL(&motorMux);
+  return copy;
+}
+
+void runCommand(dryer::Command cmd) {
+  if (!motorTaskReady) { commandResult = "REJECTED_TASK_UNAVAILABLE"; return; }
+  portENTER_CRITICAL(&motorMux);
+  readSafetyInputs(controlInputs);
+  const bool ok = controller.command(cmd, controlInputs);
+  commandResult = dryer::commandFeedback(ok, cmd, controller.fault);
+  portEXIT_CRITICAL(&motorMux);
+  Serial.printf("Command: %s\n", commandResult);
+}
+
+void onMqttMessage(char* topic, byte* payload, unsigned int length) {
+  if (strcmp(topic, TOPIC_COMMAND)) return;
+  char envelope[48];
+  if (!length || length >= sizeof(envelope) || memchr(payload, '\0', length)) {
+    commandResult = "REJECTED_ENVELOPE"; return;
+  }
+  memcpy(envelope, payload, length);
+  envelope[length] = '\0';
+  const auto cmd = commandGate.accept(envelope, sessionId);
+  if (cmd == dryer::Command::Invalid) commandResult = "REJECTED_SESSION_SEQUENCE_OR_COMMAND";
+  else {
+    runCommand(cmd);
+    lastMqttCommandResult = commandResult;
+  }
+  mqtt.publish(TOPIC_STATUS, commandResult, false);
+}
 
 int readAverage(uint8_t pin) {
   uint32_t total = 0;
-  for (uint8_t i = 0; i < AVERAGE_SAMPLES; ++i) {
-    total += analogRead(pin);
-    delay(2);
-  }
-  return static_cast<int>(total / AVERAGE_SAMPLES);
-}
-
-void updateSensors() {
-  rainRaw = readAverage(RAIN_PIN);
-  lightRaw = readAverage(LDR_PIN);
-  isRaining = rainRaw >= RAIN_WET_THRESHOLD;
-
-  if (!isDark && lightRaw >= DARK_THRESHOLD) {
-    isDark = true;
-  } else if (isDark && lightRaw <= BRIGHT_THRESHOLD) {
-    isDark = false;
-  }
-}
-
-void updateCoverDecision(uint32_t now) {
-  const bool humidityDanger =
-      dhtValid &&
-      humidityPct > HUMIDITY_DANGER_THRESHOLD;
-
-  const bool humidityWarning =
-      dhtValid &&
-      humidityPct >= HUMIDITY_WARNING_THRESHOLD &&
-      humidityPct <= HUMIDITY_DANGER_THRESHOLD;
-
-  // Ưu tiên bảo vệ nông sản:
-  // Mưa, trời tối, độ ẩm nguy hiểm hoặc DHT22 lỗi.
-  const bool shouldCover =
-      isRaining ||
-      isDark ||
-      humidityDanger ||
-      !dhtValid;
-
-  // Xác định lý do yêu cầu che bạt.
-  if (isRaining) {
-    coverReason = "RAIN";
-  } else if (isDark) {
-    coverReason = "DARK";
-  } else if (!dhtValid) {
-    coverReason = "DHT_ERROR";
-  } else if (humidityDanger) {
-    coverReason = "HUMIDITY_DANGER";
-  } else if (humidityWarning) {
-    coverReason = "HUMIDITY_WARNING";
-  } else {
-    coverReason = "NORMAL";
-  }
-
-  // Có điều kiện nguy hiểm: hủy bộ đếm mở bạt.
-  if (shouldCover) {
-    safeConditionTiming = false;
-
-    if (!coverConditionTiming) {
-      coverConditionTiming = true;
-      coverConditionSince = now;
-    }
-
-    // Độ ẩm trên 80% hoặc lỗi DHT:
-    // xác nhận nhanh, không chờ 30 giây.
-    const uint32_t confirmTime =
-        (humidityDanger || !dhtValid)
-            ? HUMIDITY_CONFIRM_MS
-            : SENSOR_CONFIRM_MS;
-
-    if (!coverRequested &&
-        now - coverConditionSince >= confirmTime) {
-      coverRequested = true;
-
-      Serial.printf(
-        "ACTION: CLOSE COVER | reason=%s\n",
-        coverReason
-      );
-    }
-
-    return;
-  }
-
-  // Không có điều kiện nguy hiểm.
-  coverConditionTiming = false;
-
-  // Chỉ mở khi khô, sáng và độ ẩm dưới 70%.
-  const bool safeToOpen =
-      !isRaining &&
-      !isDark &&
-      dhtValid &&
-      humidityPct < HUMIDITY_WARNING_THRESHOLD;
-
-  if (coverRequested && safeToOpen) {
-    if (!safeConditionTiming) {
-      safeConditionTiming = true;
-      safeConditionSince = now;
-
-      Serial.println(
-        "INFO: Conditions safe; waiting 30 seconds before opening"
-      );
-    }
-
-    if (now - safeConditionSince >= SAFE_TO_OPEN_MS) {
-      coverRequested = false;
-      safeConditionTiming = false;
-
-      Serial.println(
-        "ACTION: OPEN COVER (dry, bright, humidity below 70%)"
-      );
-    }
-  } else {
-    safeConditionTiming = false;
-  }
-
-  if (humidityWarning) {
-    // Chỉ cảnh báo, không tự đóng bạt nếu trời vẫn sáng
-    // và không có mưa.
-    Serial.println(
-      "WARNING: Humidity 70-80%; drying efficiency may decrease"
-    );
-  }
+  for (int i = 0; i < 8; ++i) { total += analogRead(pin); delay(2); }
+  return total / 8;
 }
 
 void readDht() {
-  TempAndHumidity data = dht.getTempAndHumidity();
+  auto data = dht.getTempAndHumidity();
+  dhtValid = dht.getStatus() == 0 && isfinite(data.temperature) &&
+             isfinite(data.humidity) && data.humidity >= 0 && data.humidity <= 100;
+  temperatureC = dhtValid ? data.temperature : NAN;
+  humidityPct = dhtValid ? data.humidity : NAN;
+}
 
-  if (dht.getStatus() != 0 ||
-      isnan(data.temperature) ||
-      isnan(data.humidity) ||
-      data.humidity < 0.0f ||
-      data.humidity > 100.0f) {
-
-    dhtValid = false;
-
-    Serial.printf(
-      "[DHT22] Invalid reading: %s\n",
-      dht.getStatusString()
-    );
-    return;
-  }
-
-  temperatureC = data.temperature;
-  humidityPct = data.humidity;
-  dhtValid = true;
-
-  Serial.printf(
-    "[DHT22] Temperature: %.2f C | Humidity: %.2f %%\n",
-    temperatureC,
-    humidityPct
-  );
+void updateDecision() {
+  weather.update(millis(), isRaining, isDark, dhtValid, humidityPct);
+  portENTER_CRITICAL(&motorMux);
+  controlInputs.autoClose = weather.close;
+  controlInputs.safeToOpen = weather.safeToOpen;
+  controlInputs.danger = weather.danger;
+  decisionUpdatedAt = millis();
+  portEXIT_CRITICAL(&motorMux);
+  digitalWrite(STATUS_LED_PIN, weather.close ? HIGH : LOW);
 }
 
 void publishTelemetry() {
-  if (!mqtt.connected()) return;
-
-  char payload[384];
-
-  snprintf(
-    payload,
-    sizeof(payload),
-    "{\"rain_adc\":%d,"
-    "\"light_adc\":%d,"
-    "\"rain\":%s,"
-    "\"dark\":%s,"
-    "\"temperature_c\":%.2f,"
-    "\"humidity_pct\":%.2f,"
-    "\"dht_valid\":%s,"
-    "\"humidity_warning\":%s,"
-    "\"humidity_danger\":%s,"
-    "\"cover_request\":\"%s\","
-    "\"cover_reason\":\"%s\","
-    "\"limit_covered\":%s,"
-    "\"limit_open\":%s}",
-    rainRaw,
-    lightRaw,
-    isRaining ? "true" : "false",
-    isDark ? "true" : "false",
-    dhtValid ? temperatureC : -999.0f,
-    dhtValid ? humidityPct : -999.0f,
-    dhtValid ? "true" : "false",
-    (dhtValid &&
-     humidityPct >= HUMIDITY_WARNING_THRESHOLD)
-        ? "true" : "false",
-    (dhtValid &&
-     humidityPct > HUMIDITY_DANGER_THRESHOLD)
-        ? "true" : "false",
-    coverRequested ? "CLOSE" : "OPEN",
-    coverReason,
-    digitalRead(LIMIT_COVERED_PIN) == LOW
-        ? "true" : "false",
-    digitalRead(LIMIT_OPEN_PIN) == LOW
-        ? "true" : "false"
-  );
-
-  mqtt.publish(TOPIC_TELEMETRY, payload, false);
-}
-
-void publishBlynk() {
-  if (!Blynk.connected()) return;
-  if (!isnan(temperatureC)) Blynk.virtualWrite(V0, temperatureC);
-  if (!isnan(humidityPct)) Blynk.virtualWrite(V1, humidityPct);
-  Blynk.virtualWrite(V2, rainRaw);
-  Blynk.virtualWrite(V3, lightRaw);
-  Blynk.virtualWrite(V4, isRaining ? 1 : 0);
-  Blynk.virtualWrite(V5, isDark ? 1 : 0);
-  Blynk.virtualWrite(V6, coverRequested ? 1 : 0);
-}
-
-void ensureMqttConnected(uint32_t now) {
-  if (mqtt.connected() || WiFi.status() != WL_CONNECTED) return;
-  if (now - lastMqttReconnectAt < MQTT_RECONNECT_INTERVAL_MS) return;
-  lastMqttReconnectAt = now;
-
-  String clientId = "agri-dryer-" + String((uint32_t)ESP.getEfuseMac(), HEX);
-  bool connected;
-  if (strlen(MQTT_USER) > 0) {
-    connected = mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD,
-                             TOPIC_AVAILABILITY, 1, true, "offline");
-  } else {
-    connected = mqtt.connect(clientId.c_str(), TOPIC_AVAILABILITY, 1, true, "offline");
+  dryer::Inputs in;
+  auto state = snapshot(in);
+  if (mqtt.connected()) {
+    char payload[1024];
+    const int size = snprintf(payload, sizeof(payload),
+      "{\"session\":\"%s\",\"last_command_seq\":%llu,\"rain_adc\":%d,\"light_adc\":%d,"
+      "\"rain\":%s,\"dark\":%s,\"temperature_c\":%.2f,\"humidity_pct\":%.2f,"
+      "\"dht_valid\":%s,\"safe_to_open\":%s,\"humidity_warning\":%s,\"humidity_danger\":%s,"
+      "\"cover_request\":\"%s\",\"cover_reason\":\"%s\","
+      "\"limit_covered\":%s,\"limit_open\":%s,\"estop\":%s,\"driver_fault\":%s,"
+      "\"mode\":\"%s\",\"motion\":\"%s\",\"fault\":\"%s\","
+      "\"motor_output_enabled\":%s,\"motor_active\":%s,\"command_result\":\"%s\","
+      "\"last_command_result\":\"%s\"}",
+      sessionId, (unsigned long long)commandGate.lastSequence, rainRaw, lightRaw,
+      isRaining ? "true" : "false", isDark ? "true" : "false",
+      dhtValid ? temperatureC : -999.0f, dhtValid ? humidityPct : -999.0f,
+      dhtValid ? "true" : "false", in.safeToOpen ? "true" : "false",
+      dhtValid && humidityPct >= 70 ? "true" : "false",
+      dhtValid && humidityPct > 80 ? "true" : "false", weather.close ? "CLOSE" : "OPEN",
+      weather.reason, in.covered ? "true" : "false", in.open ? "true" : "false",
+      in.emergency ? "true" : "false", in.driverFault ? "true" : "false",
+      dryer::name(state.mode), dryer::name(state.motion), dryer::name(state.fault),
+      MOTOR_OUTPUT_ENABLED ? "true" : "false",
+      MOTOR_OUTPUT_ENABLED && state.output.enable ? "true" : "false", commandResult, lastMqttCommandResult);
+    if (size > 0 && size < int(sizeof(payload))) {
+      if (!mqtt.publish(TOPIC_TELEMETRY, payload, false)) Serial.println("MQTT publish failed");
+    } else Serial.println("Telemetry overflow");
   }
+  Serial.printf("mode=%s motion=%s fault=%s request=%s reason=%s outputs=%s\n",
+    dryer::name(state.mode), dryer::name(state.motion), dryer::name(state.fault),
+    weather.close ? "CLOSE" : "OPEN", weather.reason, MOTOR_OUTPUT_ENABLED ? "ENABLED" : "LOCKED");
+}
 
-  if (connected) {
-    mqtt.publish(TOPIC_AVAILABILITY, "online", true);
-    mqtt.publish(TOPIC_STATUS, "connected", true);
-    Serial.println("MQTT: connected to broker");
-  } else {
-    Serial.printf("MQTT: connect failed, state=%d\n", mqtt.state());
+void serviceConnections() {
+  uint32_t now = millis();
+  if (WiFi.status() != WL_CONNECTED) {
+    if (uint32_t(now - lastWifiRetry) >= 10000) {
+      lastWifiRetry = now;
+      WiFi.disconnect();
+      WiFi.begin(WIFI_SSID, WIFI_PASSWORD, WIFI_CHANNEL);
+    }
+    return;
   }
-}
-
-void ensureBlynkConnected(uint32_t now) {
-  if (Blynk.connected() || WiFi.status() != WL_CONNECTED) return;
-  if (now - lastBlynkReconnectAt < BLYNK_RECONNECT_INTERVAL_MS) return;
-  lastBlynkReconnectAt = now;
-  if (!blynkConfigured) return;
-  Serial.println("Blynk: attempting connection...");
-  bool connected = Blynk.connect(3000);
-
-  Serial.printf(
-      "Blynk connection result: %s\n",
-      connected ? "SUCCESS" : "FAILED"
-  );
-}
-
-void reportStatus(uint32_t now) {
-  if (now - lastReportAt < REPORT_INTERVAL_MS) return;
-  lastReportAt = now;
-  Serial.printf("rain_adc=%d rain=%s | light_adc=%d dark=%s | temp=%.1fC humidity=%.1f%% | ",
-                rainRaw, isRaining ? "YES" : "NO", lightRaw, isDark ? "YES" : "NO",
-                temperatureC, humidityPct);
-  Serial.printf("cover_request=%s | limit_covered=%s limit_open=%s | MQTT=%s Blynk=%s\n",
-                coverRequested ? "CLOSE" : "OPEN",
-                digitalRead(LIMIT_COVERED_PIN) == LOW ? "ACTIVE" : "inactive",
-                digitalRead(LIMIT_OPEN_PIN) == LOW ? "ACTIVE" : "inactive",
-                mqtt.connected() ? "online" : "offline",
-                Blynk.connected() ? "online" : "offline");
+  // Avoid long reconnection work while the actuator is moving.
+  dryer::Inputs in;
+  const auto state = snapshot(in);
+  if (MOTOR_OUTPUT_ENABLED &&
+      (state.output.enable || state.motion == dryer::Motion::Waiting)) return;
+  if (!mqtt.connected() && uint32_t(now - lastMqttReconnectAt) >= 5000) {
+    lastMqttReconnectAt = now;
+    String client = "agri-dryer-" + String((uint32_t)ESP.getEfuseMac(), HEX);
+    bool ok = strlen(MQTT_USER) ? mqtt.connect(client.c_str(), MQTT_USER, MQTT_PASSWORD,
+      TOPIC_AVAILABILITY, 1, true, "offline") :
+      mqtt.connect(client.c_str(), TOPIC_AVAILABILITY, 1, true, "offline");
+    if (ok) {
+      mqtt.publish(TOPIC_AVAILABILITY, "online", true);
+      mqtt.subscribe(TOPIC_COMMAND, 1);
+      mqtt.publish(TOPIC_STATUS, "connected", false);
+      publishTelemetry();
+    }
+  }
 }
 
 void setup() {
+  // Add a hardware pull-down on EN to keep the driver off during reset.
+  digitalWrite(MOTOR_ENABLE_PIN, LOW); pinMode(MOTOR_ENABLE_PIN, OUTPUT);
+  digitalWrite(MOTOR_IN1_PIN, LOW); pinMode(MOTOR_IN1_PIN, OUTPUT);
+  digitalWrite(MOTOR_IN2_PIN, LOW); pinMode(MOTOR_IN2_PIN, OUTPUT);
+  pinMode(LIMIT_COVERED_PIN, INPUT_PULLUP); pinMode(LIMIT_OPEN_PIN, INPUT_PULLUP);
+  pinMode(ESTOP_PIN, INPUT_PULLUP); pinMode(DRIVER_FAULT_PIN, INPUT_PULLUP);
+  pinMode(STATUS_LED_PIN, OUTPUT); pinMode(RAIN_PIN, INPUT); pinMode(LDR_PIN, INPUT);
   Serial.begin(115200);
-  delay(100);
-
-  Serial.printf(
-      "Blynk token configured: %s\n",
-      (strlen(BLYNK_AUTH_TOKEN) > 0 &&
-      String(BLYNK_AUTH_TOKEN) != "YOUR_BLYNK_DEVICE_AUTH_TOKEN")
-          ? "YES" : "NO"
-  );
-
-  
-  Serial.println("\nAUTOMATIC AGRICULTURAL DRYER - MQTT + BLYNK");
-  Serial.println("FIRMWARE VERSION: DEBUG-BLYNK-DHT-02");
-
-  pinMode(RAIN_PIN, INPUT);
-  pinMode(LDR_PIN, INPUT);
-  pinMode(LIMIT_COVERED_PIN, INPUT_PULLUP);
-  pinMode(LIMIT_OPEN_PIN, INPUT_PULLUP);
-  pinMode(STATUS_LED_PIN, OUTPUT);
+  snprintf(sessionId, sizeof(sessionId), "%08lx", (unsigned long)esp_random());
+  motorTaskReady = xTaskCreatePinnedToCore(motorTask, "cover-safety", 4096, nullptr,
+                                         3, nullptr, 1) == pdPASS;
+  if (!motorTaskReady) Serial.println("ERROR: motor task unavailable; outputs locked");
   analogReadResolution(12);
-
   dht.setup(DHT_PIN, DHTesp::DHT22);
-  delay(2000);
-  Serial.println("DHT22 initialized");
-
   WiFi.mode(WIFI_STA);
-  WiFi.begin("Wokwi-GUEST", "", 6);
-  Serial.print("WiFi: connecting to Wokwi-GUEST");
-  const uint32_t wifiStart = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 15000) {
-    delay(250);
-    Serial.print('.');
-  }
-  Serial.println();
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("WiFi connected, IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("WiFi not connected yet; will continue trying in loop.");
-  }
-
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD, WIFI_CHANNEL);
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
-  mqtt.setBufferSize(384);
-  mqtt.setKeepAlive(30);
-
-  if (String(BLYNK_AUTH_TOKEN) != "YOUR_BLYNK_DEVICE_AUTH_TOKEN" &&
-      String(BLYNK_AUTH_TOKEN) != "") {
-    Blynk.config(BLYNK_AUTH_TOKEN);
-    blynkConfigured = true;
-  } else {
-    Serial.println("Blynk skipped: add a real Device Auth Token in include/secrets.h");
-  }
-
+  mqtt.setCallback(onMqttMessage);
+  mqtt.setBufferSize(1280); mqtt.setSocketTimeout(1); mqtt.setKeepAlive(30);
+  wifiClient.setTimeout(1000);
   digitalWrite(STATUS_LED_PIN, HIGH);
-  delay(2000);
+  delay(2000); // safety task already runs; controller boots STOPPED
   digitalWrite(STATUS_LED_PIN, LOW);
-  Serial.printf("Thresholds: rain >= %d, dark >= %d, bright <= %d\n",
-                RAIN_WET_THRESHOLD, DARK_THRESHOLD, BRIGHT_THRESHOLD);
-  Serial.printf("MQTT target: %s:%d (requires Wokwi Private IoT Gateway for local Docker broker)\n",
-                MQTT_HOST, MQTT_PORT);
+  Serial.println("DRYER v3 - boot STOPPED; RESET after fault, then explicit AUTO/OPEN/CLOSE");
 }
 
 void loop() {
-  const uint32_t now = millis();
-
-  if (WiFi.status() != WL_CONNECTED) {
-    static uint32_t lastWifiRetry = 0;
-    if (now - lastWifiRetry >= 5000) {
-      lastWifiRetry = now;
-      WiFi.begin("Wokwi-GUEST", "", 6);
-    }
-  }
-
-  if (now - lastSampleAt >= SAMPLE_INTERVAL_MS) {
+  uint32_t now = millis();
+  if (uint32_t(now - lastDhtAt) >= 2500) { lastDhtAt = now; readDht(); updateDecision(); }
+  if (uint32_t(now - lastSampleAt) >= 250) {
     lastSampleAt = now;
-    updateSensors();
-    updateCoverDecision(now);
-    digitalWrite(STATUS_LED_PIN, coverRequested ? HIGH : LOW);
+    rainRaw = readAverage(RAIN_PIN); lightRaw = readAverage(LDR_PIN);
+    isRaining = rainRaw >= RAIN_WET_THRESHOLD;
+    if (lightRaw >= DARK_THRESHOLD) isDark = true;
+    else if (lightRaw <= BRIGHT_THRESHOLD) isDark = false;
+    updateDecision();
   }
-
-  if (now - lastDhtAt >= DHT_INTERVAL_MS) {
-    lastDhtAt = now;
-    readDht();
-    publishBlynk();
-    publishTelemetry();
-  }
-
-  ensureMqttConnected(now);
-  ensureBlynkConnected(now);
   if (mqtt.connected()) mqtt.loop();
-  if (Blynk.connected()) Blynk.run();
-  reportStatus(now);
+  serviceConnections();
+  if (uint32_t(millis() - lastReportAt) >= TELEMETRY_INTERVAL_MS) {
+    lastReportAt = millis(); publishTelemetry();
+  }
+  delay(1);
 }

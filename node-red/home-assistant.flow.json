@@ -1,0 +1,187 @@
+[
+  {
+    "id": "dryer-ha-tab",
+    "type": "tab",
+    "label": "Dryer - Home Assistant bridge",
+    "disabled": false,
+    "info": "MQTT bridge for Home Assistant alongside the existing Node-RED dashboard."
+  },
+  {
+    "id": "dryer-ha-broker",
+    "type": "mqtt-broker",
+    "name": "Existing Mosquitto - HA bridge",
+    "broker": "mosquitto",
+    "port": "1883",
+    "clientid": "dryer-ha-bridge",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "15",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "willTopic": "dryer/ha/availability",
+    "willQos": "0",
+    "willPayload": "offline",
+    "willRetain": false,
+    "closeTopic": "dryer/ha/availability",
+    "closeQos": "0",
+    "closePayload": "offline",
+    "closeRetain": false
+  },
+  {
+    "id": "ha-telemetry",
+    "type": "mqtt in",
+    "z": "dryer-ha-tab",
+    "name": "Live firmware telemetry",
+    "topic": "dryer/telemetry",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "dryer-ha-broker",
+    "x": 130,
+    "y": 80,
+    "wires": [
+      [
+        "ha-normalize"
+      ]
+    ]
+  },
+  {
+    "id": "ha-normalize",
+    "type": "function",
+    "z": "dryer-ha-tab",
+    "name": "Validate and normalize",
+    "func": "// Accept live packets only. Replayed retained telemetry cannot reset freshness.\nif (msg.retain === true) return null;\nlet d = msg.payload;\nif (typeof d === 'string') { try { d = JSON.parse(d); } catch (_) { return null; } }\nif (!d || typeof d !== 'object' || Array.isArray(d)) return null;\nconst out = {};\nconst number = (v, min, max, integer = false) => {\n    if (typeof v !== 'number' && (typeof v !== 'string' || !v.trim())) return null;\n    const n = Number(v);\n    return Number.isFinite(n) && n >= min && n <= max && (!integer || Number.isInteger(n)) ? n : null;\n};\nconst bool = v => v === true || v === 1 || v === 'true' || v === '1' ? true :\n    v === false || v === 0 || v === 'false' || v === '0' ? false : null;\nif (typeof d.session !== 'string' || !/^[0-9a-f]{8}$/.test(d.session)) return null;\nout.session = d.session;\nfor (const key of ['rain_adc', 'light_adc']) {\n    out[key] = number(d[key], 0, 4095, true); if (out[key] === null) return null;\n}\nout.last_command_seq = number(d.last_command_seq, 0, Number.MAX_SAFE_INTEGER, true);\nif (out.last_command_seq === null) return null;\nfor (const key of ['rain', 'dark', 'dht_valid', 'safe_to_open', 'limit_covered', 'limit_open',\n    'estop', 'driver_fault', 'motor_output_enabled', 'motor_active']) {\n    out[key] = bool(d[key]); if (out[key] === null) return null;\n}\nif (out.dht_valid) {\n    out.temperature_c = number(d.temperature_c, -40, 80);\n    out.humidity_pct = number(d.humidity_pct, 0, 100);\n    if (out.temperature_c === null || out.humidity_pct === null) return null;\n} else { out.temperature_c = null; out.humidity_pct = null; }\nout.humidity_warning = out.dht_valid && out.humidity_pct >= 70;\nout.humidity_danger = out.dht_valid && out.humidity_pct > 80;\nconst enums = {\n    mode: ['STOPPED','AUTO','MANUAL_OPEN','MANUAL_CLOSE'],\n    motion: ['IDLE','OPENING','CLOSING','REVERSAL_WAIT','FAULT'],\n    fault: ['NONE','ESTOP','BOTH_LIMITS','MOTION_TIMEOUT','DRIVER_FAULT'],\n    cover_request: ['OPEN','CLOSE'],\n    cover_reason: ['NORMAL','RAIN','DARK','DHT_ERROR','HUMIDITY_WARNING','HUMIDITY_DANGER']\n};\nfor (const [key, values] of Object.entries(enums)) {\n    if (!values.includes(d[key])) return null; out[key] = d[key];\n}\nfor (const key of ['command_result','last_command_result']) {\n    if (typeof d[key] !== 'string' || !/^[A-Z_]{1,64}$/.test(d[key])) return null;\n    out[key] = d[key];\n}\nout.limit_fault = out.limit_open && out.limit_covered;\n// Never infer physical position or movement from a request/output alone.\nout.roof_position = out.limit_fault ? 'FAULT' : out.limit_covered ? 'closed' :\n    out.limit_open ? 'open' : 'unknown';\nout.safe_to_open = out.safe_to_open && !out.rain && !out.dark && out.dht_valid &&\n    out.humidity_pct < 70 && !out.limit_fault && !out.estop && !out.driver_fault && out.fault === 'NONE';\nmsg.payload = out;\nflow.set('dryerState', {data:out, receivedAt:Date.now()});\nreturn msg;\n",
+    "outputs": 1,
+    "x": 370,
+    "y": 80,
+    "wires": [
+      [
+        "ha-state",
+        "ha-debug"
+      ]
+    ]
+  },
+  {
+    "id": "ha-state",
+    "type": "function",
+    "z": "dryer-ha-tab",
+    "name": "HA state and device acknowledgement",
+    "func": "const state = flow.get('dryerState');\nif (!state) return null;\nconst pending = flow.get('haPending');\nlet ack = null;\nif (pending && state.data.session !== pending.session) {\n    ack = {...pending, result:'DEVICE_RESTARTED', completed_at:Date.now()};\n} else if (pending && state.data.last_command_seq === pending.sequence) {\n    ack = {...pending, result:state.data.last_command_result, completed_at:Date.now()};\n} else if (pending && state.data.last_command_seq > pending.sequence) {\n    ack = {...pending, result:'SUPERSEDED', completed_at:Date.now()};\n}\nif (ack) flow.set('haPending', null);\nreturn [{topic:'dryer/ha/state', payload:JSON.stringify(state.data), qos:'0', retain:false},\n    ack ? {topic:'dryer/ha/command_result', payload:JSON.stringify(ack), qos:'0', retain:false} : null];\n",
+    "outputs": 2,
+    "x": 650,
+    "y": 80,
+    "wires": [
+      [
+        "ha-mqtt-out"
+      ],
+      [
+        "ha-mqtt-out",
+        "ha-debug"
+      ]
+    ]
+  },
+  {
+    "id": "ha-command-in",
+    "type": "mqtt in",
+    "z": "dryer-ha-tab",
+    "name": "Home Assistant command requests",
+    "topic": "dryer/ha/command",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "dryer-ha-broker",
+    "x": 160,
+    "y": 180,
+    "wires": [
+      [
+        "ha-command"
+      ]
+    ]
+  },
+  {
+    "id": "ha-command",
+    "type": "function",
+    "z": "dryer-ha-tab",
+    "name": "TTL, replay, throttle, envelope",
+    "func": "const now = Date.now();\nlet request = msg.payload;\nif (typeof request === 'string') { try { request=JSON.parse(request); } catch (_) { request=null; } }\nconst command = request && request.command;\nconst allowed = ['OPEN','CLOSE','STOP','AUTO','MANUAL','RESET'];\nfunction reject(result) {\n    return [null, {topic:'dryer/ha/command_result',payload:JSON.stringify({command:command || 'INVALID',result,completed_at:now}),qos:'0',retain:false}];\n}\nif (msg.retain === true) return reject('REJECTED_RETAINED');\nif (!allowed.includes(command)) return reject('REJECTED_COMMAND');\nif (!Number.isSafeInteger(request.issued_at) || now-request.issued_at > 5000 || now-request.issued_at < -2000) return reject('REJECTED_EXPIRED');\nconst state = flow.get('dryerState');\nif (!state || now-state.receivedAt < 0 || now-state.receivedAt >= 10000) return reject('REJECTED_OFFLINE');\n// ESP32 is still the final interlock. Forward OPEN so the device can confirm a\n// rejection; this bridge never changes safe_to_open or bypasses its safety check.\nconst previous = flow.get('haLastSent');\nif (command !== 'STOP' && previous !== undefined && now-previous < 1000) return reject('REJECTED_RATE_LIMIT');\nconst pending = flow.get('haPending');\nif (command !== 'STOP' && pending) return reject('REJECTED_BUSY');\nconst sequence = Math.max(now, state.data.last_command_seq+1, (flow.get('haSequence') || 0)+1);\nif (!Number.isSafeInteger(sequence)) return reject('REJECTED_SEQUENCE');\nflow.set('haSequence', sequence); flow.set('haLastSent', now);\n// MANUAL selects a safe, stationary manual state; subsequent OPEN/CLOSE moves it.\nconst action = command === 'MANUAL' ? 'STOP' : command;\nconst queued = {command,session:state.data.session,sequence,issued_at:request.issued_at,sent_at:now};\nflow.set('haPending', queued);\nreturn [{topic:'dryer/command',payload:`${state.data.session} ${sequence} ${action}`,qos:'0',retain:false},\n    {topic:'dryer/ha/command_result',payload:JSON.stringify({...queued,result:'PENDING'}),qos:'0',retain:false}];\n",
+    "outputs": 2,
+    "x": 490,
+    "y": 180,
+    "wires": [
+      [
+        "ha-mqtt-out"
+      ],
+      [
+        "ha-mqtt-out",
+        "ha-debug"
+      ]
+    ]
+  },
+  {
+    "id": "ha-timer",
+    "type": "inject",
+    "z": "dryer-ha-tab",
+    "name": "Freshness / command timeout",
+    "props": [],
+    "repeat": "2",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.5",
+    "x": 160,
+    "y": 280,
+    "wires": [
+      [
+        "ha-watchdog"
+      ]
+    ]
+  },
+  {
+    "id": "ha-watchdog",
+    "type": "function",
+    "z": "dryer-ha-tab",
+    "name": "Offline after 10s, ACK timeout 5s",
+    "func": "const now = Date.now(), state = flow.get('dryerState');\nconst live = state && now-state.receivedAt >= 0 && now-state.receivedAt < 10000;\nconst pending = flow.get('haPending');\nlet timeout = null;\nif (pending && now-pending.sent_at >= 5000) {\n    timeout={topic:'dryer/ha/command_result',payload:JSON.stringify({...pending,result:'TIMEOUT',completed_at:now}),qos:'0',retain:false};\n    flow.set('haPending',null); // never retry a movement command automatically\n}\nreturn [{topic:'dryer/ha/availability',payload:live ? 'online' : 'offline',qos:'0',retain:false},\n    {topic:'dryer/ha/heartbeat',payload:live ? 'online' : 'offline',qos:'0',retain:false}, timeout];\n",
+    "outputs": 3,
+    "x": 500,
+    "y": 280,
+    "wires": [
+      [
+        "ha-mqtt-out"
+      ],
+      [
+        "ha-mqtt-out"
+      ],
+      [
+        "ha-mqtt-out",
+        "ha-debug"
+      ]
+    ]
+  },
+  {
+    "id": "ha-mqtt-out",
+    "type": "mqtt out",
+    "z": "dryer-ha-tab",
+    "name": "Non-retained state / commands",
+    "topic": "",
+    "qos": "0",
+    "retain": "false",
+    "broker": "dryer-ha-broker",
+    "x": 950,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "ha-debug",
+    "type": "debug",
+    "z": "dryer-ha-tab",
+    "name": "Dryer HA telemetry / ACK",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 960,
+    "y": 300,
+    "wires": []
+  }
+]

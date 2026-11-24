@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="vi">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Giàn phơi tự động</title>
+<style>
+:root{font:16px system-ui,sans-serif;color:#18382c;background:#f1f5ef}*{box-sizing:border-box}
+body{max-width:1080px;margin:auto;padding:32px 20px}h1{font-size:32px;margin:6px 0 12px}
+.eyebrow{letter-spacing:.12em;font-size:12px;font-weight:700;color:#506e5b}.bar{display:flex;justify-content:space-between;gap:12px;align-items:center}
+#connection{padding:8px 14px;border-radius:24px;background:#e5d4ce}.online{background:#d1ebd8!important}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:24px 0}
+.card,section{background:white;border:1px solid #dce5da;border-radius:16px;padding:22px}.label{font-size:13px;color:#5a7162}.value{font-size:24px;font-weight:650;margin-top:8px;overflow-wrap:anywhere}
+.buttons{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}button{border:0;background:#235f42;color:white;border-radius:9px;padding:14px 20px;font:inherit;cursor:pointer}
+button[data-command=STOP]{background:#a5332d}button[data-command=RESET]{background:#57635d}button:disabled{opacity:.4;cursor:not-allowed}
+#message{min-height:24px;overflow-wrap:anywhere}.note{font-size:14px;line-height:1.6;color:#526859}#fault[data-fault=true]{color:#aa2924}
+</style></head>
+<body><div class="bar"><span class="eyebrow">AUTOMATIC AGRICULTURAL DRYER</span><span id="connection">Chưa có dữ liệu</span></div>
+<h1>Giàn phơi tự động</h1><p class="note">Giám sát môi trường và trạng thái mái che.</p>
+<div class="cards">
+<div class="card"><div class="label">Nhiệt độ</div><div class="value" id="temperature">—</div></div>
+<div class="card"><div class="label">Độ ẩm</div><div class="value" id="humidity">—</div></div>
+<div class="card"><div class="label">Thời tiết</div><div class="value" id="weather">—</div></div>
+<div class="card"><div class="label">Yêu cầu tự động</div><div class="value" id="request">—</div></div>
+<div class="card"><div class="label">Chế độ</div><div class="value" id="mode">—</div></div>
+<div class="card"><div class="label">Chuyển động</div><div class="value" id="motion">—</div></div>
+<div class="card"><div class="label">Công tắc hành trình</div><div class="value" id="limits">—</div></div>
+<div class="card"><div class="label">Lỗi</div><div class="value" id="fault">—</div></div>
+</div>
+<section><h2>Điều khiển mái che</h2><p id="motor" class="note">Đang chờ trạng thái đầu ra motor.</p>
+<div class="buttons"><button disabled data-command="STOP">Dừng</button><button disabled data-command="AUTO">Tự động</button><button disabled data-command="OPEN">Mở bạt</button><button disabled data-command="CLOSE">Đóng bạt</button><button disabled data-command="RESET">Xóa lỗi</button></div>
+<p id="message" role="status" aria-live="polite"></p><p class="note">Dừng trên mạng phụ thuộc kết nối. Dùng nút dừng khẩn vật lý để ngắt nguồn driver. Xóa lỗi đưa hệ thống về STOPPED; cần chọn chế độ để chạy tiếp.</p>
+</section><p class="note" id="updated">Chưa nhận telemetry.</p>
+<script>
+const $ = id => document.getElementById(id);
+let live = false, busy = false, pending = null;
+function buttons() { document.querySelectorAll('button[data-command]').forEach(b => { b.disabled = !live || (busy && b.dataset.command !== 'STOP'); }); }
+async function refresh() {
+  try {
+    const response = await fetch('/dryer/state', {cache:'no-store', signal:AbortSignal.timeout(4000)});
+    if (!response.ok) throw Error('state');
+    const state = await response.json(); live = state.online === true;
+    $('connection').textContent = live ? 'Đang kết nối' : 'Mất kết nối / dữ liệu cũ';
+    $('connection').classList.toggle('online', live);
+    const d = state.telemetry;
+    if (d) {
+      $('temperature').textContent = live && d.dht_valid ? `${d.temperature_c} °C` : 'Không hợp lệ';
+      $('humidity').textContent = live && d.dht_valid ? `${d.humidity_pct} %` : 'Không hợp lệ';
+      $('weather').textContent = `${d.rain ? 'Mưa' : 'Khô'} · ${d.dark ? 'Tối' : 'Sáng'}`;
+      $('request').textContent = `${d.cover_request} · ${d.cover_reason}`;
+      for (const key of ['mode','motion','fault']) $(key).textContent = d[key];
+      $('fault').dataset.fault = d.fault !== 'NONE';
+      $('limits').textContent = `Đóng: ${d.limit_covered ? 'ON' : 'OFF'} / Mở: ${d.limit_open ? 'ON' : 'OFF'}`;
+      $('motor').textContent = d.motor_output_enabled ? `Đầu ra motor đã bật · ${d.motor_active ? 'đang cấp lệnh chạy' : 'đang dừng'}` : 'Đầu ra motor đang khóa; trạng thái chuyển động chỉ là mô phỏng logic.';
+      $('updated').textContent = `Tuổi dữ liệu: ${Math.round(state.age_ms/1000)} giây · Dừng khẩn: ${d.estop ? 'KÍCH HOẠT' : 'bình thường'}`;
+      if (pending && pending.session !== d.session) { $('message').textContent = 'Thiết bị đã khởi động lại; không gửi lại lệnh.'; pending = null; }
+      if (pending && d.last_command_seq === pending.sequence) { $('message').textContent = `Thiết bị phản hồi: ${d.last_command_result}`; pending = null; }
+      if (pending && d.last_command_seq > pending.sequence) { $('message').textContent = 'Có lệnh mới hơn từ phiên điều khiển khác; xem trạng thái hiện tại.'; pending = null; }
+    }
+  } catch (_) { live = false; $('connection').textContent = 'Không truy cập được Node-RED'; $('connection').classList.remove('online'); }
+  buttons();
+}
+document.querySelectorAll('button[data-command]').forEach(button => button.addEventListener('click', async () => {
+  busy = true; buttons();
+  try {
+    const response = await fetch('/dryer/command', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command:button.dataset.command}), signal:AbortSignal.timeout(4000)});
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error || 'Không gửi được lệnh');
+    pending = result;
+    $('message').textContent = `Đã xếp lệnh ${result.queued}; chờ thiết bị phản hồi.`;
+  } catch (error) { $('message').textContent = error.message; }
+  busy = false; buttons();
+}));
+refresh(); setInterval(refresh, 2000);
+</script></body></html>

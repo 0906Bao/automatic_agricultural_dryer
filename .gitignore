@@ -1,3 +1,16 @@
 .pio/
 .vscode/
 include/secrets.local.h
+.env
+.env.*
+!.env.example
+.local/
+backups/
+home-assistant/secrets.yaml
+home-assistant/.storage/
+home-assistant/*.db*
+home-assistant/*.log*
+mosquitto/passwords
+mosquitto/acl.local
+__pycache__/
+*.pyc

@@ -1,0 +1,384 @@
+[
+  {
+    "id": "dryer-tab",
+    "type": "tab",
+    "label": "Agricultural dryer",
+    "disabled": false,
+    "info": "Local lab dashboard at /dryer. Commands are never retained."
+  },
+  {
+    "id": "dryer-broker",
+    "type": "mqtt-broker",
+    "name": "Mosquitto (Docker)",
+    "broker": "mosquitto",
+    "port": "1883",
+    "clientid": "dryer-node-red",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "30",
+    "cleansession": true,
+    "autoUnsubscribe": true
+  },
+  {
+    "id": "telemetry-in",
+    "type": "mqtt in",
+    "z": "dryer-tab",
+    "name": "Telemetry",
+    "topic": "dryer/telemetry",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "dryer-broker",
+    "x": 140,
+    "y": 80,
+    "wires": [
+      [
+        "cache"
+      ]
+    ]
+  },
+  {
+    "id": "cache",
+    "type": "function",
+    "z": "dryer-tab",
+    "name": "Cache fresh telemetry",
+    "func": "const data = msg.payload;\nif (!data || typeof data !== 'object' || Array.isArray(data) ||\n    !/^[0-9a-f]{8}$/.test(data.session) ||\n    !Number.isSafeInteger(data.last_command_seq) || data.last_command_seq < 0) return null;\nflow.set('dryerState', { data, receivedAt: Date.now() });\nreturn null;\n",
+    "outputs": 1,
+    "x": 390,
+    "y": 80,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "page-in",
+    "type": "http in",
+    "z": "dryer-tab",
+    "name": "Dashboard",
+    "url": "/dryer",
+    "method": "get",
+    "upload": false,
+    "x": 140,
+    "y": 160,
+    "wires": [
+      [
+        "page"
+      ]
+    ]
+  },
+  {
+    "id": "page",
+    "type": "template",
+    "z": "dryer-tab",
+    "name": "Dashboard HTML",
+    "field": "payload",
+    "fieldType": "msg",
+    "format": "html",
+    "syntax": "plain",
+    "template": "<!doctype html>\n<html lang=\"vi\">\n<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Giàn phơi tự động</title>\n<style>\n:root{font:16px system-ui,sans-serif;color:#18382c;background:#f1f5ef}*{box-sizing:border-box}\nbody{max-width:1080px;margin:auto;padding:32px 20px}h1{font-size:32px;margin:6px 0 12px}\n.eyebrow{letter-spacing:.12em;font-size:12px;font-weight:700;color:#506e5b}.bar{display:flex;justify-content:space-between;gap:12px;align-items:center}\n#connection{padding:8px 14px;border-radius:24px;background:#e5d4ce}.online{background:#d1ebd8!important}\n.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:24px 0}\n.card,section{background:white;border:1px solid #dce5da;border-radius:16px;padding:22px}.label{font-size:13px;color:#5a7162}.value{font-size:24px;font-weight:650;margin-top:8px;overflow-wrap:anywhere}\n.buttons{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}button{border:0;background:#235f42;color:white;border-radius:9px;padding:14px 20px;font:inherit;cursor:pointer}\nbutton[data-command=STOP]{background:#a5332d}button[data-command=RESET]{background:#57635d}button:disabled{opacity:.4;cursor:not-allowed}\n#message{min-height:24px;overflow-wrap:anywhere}.note{font-size:14px;line-height:1.6;color:#526859}#fault[data-fault=true]{color:#aa2924}\n</style></head>\n<body><div class=\"bar\"><span class=\"eyebrow\">AUTOMATIC AGRICULTURAL DRYER</span><span id=\"connection\">Chưa có dữ liệu</span></div>\n<h1>Giàn phơi tự động</h1><p class=\"note\">Giám sát môi trường và trạng thái mái che.</p>\n<div class=\"cards\">\n<div class=\"card\"><div class=\"label\">Nhiệt độ</div><div class=\"value\" id=\"temperature\">—</div></div>\n<div class=\"card\"><div class=\"label\">Độ ẩm</div><div class=\"value\" id=\"humidity\">—</div></div>\n<div class=\"card\"><div class=\"label\">Thời tiết</div><div class=\"value\" id=\"weather\">—</div></div>\n<div class=\"card\"><div class=\"label\">Yêu cầu tự động</div><div class=\"value\" id=\"request\">—</div></div>\n<div class=\"card\"><div class=\"label\">Chế độ</div><div class=\"value\" id=\"mode\">—</div></div>\n<div class=\"card\"><div class=\"label\">Chuyển động</div><div class=\"value\" id=\"motion\">—</div></div>\n<div class=\"card\"><div class=\"label\">Công tắc hành trình</div><div class=\"value\" id=\"limits\">—</div></div>\n<div class=\"card\"><div class=\"label\">Lỗi</div><div class=\"value\" id=\"fault\">—</div></div>\n</div>\n<section><h2>Điều khiển mái che</h2><p id=\"motor\" class=\"note\">Đang chờ trạng thái đầu ra motor.</p>\n<div class=\"buttons\"><button disabled data-command=\"STOP\">Dừng</button><button disabled data-command=\"AUTO\">Tự động</button><button disabled data-command=\"OPEN\">Mở bạt</button><button disabled data-command=\"CLOSE\">Đóng bạt</button><button disabled data-command=\"RESET\">Xóa lỗi</button></div>\n<p id=\"message\" role=\"status\" aria-live=\"polite\"></p><p class=\"note\">Dừng trên mạng phụ thuộc kết nối. Dùng nút dừng khẩn vật lý để ngắt nguồn driver. Xóa lỗi đưa hệ thống về STOPPED; cần chọn chế độ để chạy tiếp.</p>\n</section><p class=\"note\" id=\"updated\">Chưa nhận telemetry.</p>\n<script>\nconst $ = id => document.getElementById(id);\nlet live = false, busy = false, pending = null;\nfunction buttons() { document.querySelectorAll('button[data-command]').forEach(b => { b.disabled = !live || (busy && b.dataset.command !== 'STOP'); }); }\nasync function refresh() {\n  try {\n    const response = await fetch('/dryer/state', {cache:'no-store', signal:AbortSignal.timeout(4000)});\n    if (!response.ok) throw Error('state');\n    const state = await response.json(); live = state.online === true;\n    $('connection').textContent = live ? 'Đang kết nối' : 'Mất kết nối / dữ liệu cũ';\n    $('connection').classList.toggle('online', live);\n    const d = state.telemetry;\n    if (d) {\n      $('temperature').textContent = live && d.dht_valid ? `${d.temperature_c} °C` : 'Không hợp lệ';\n      $('humidity').textContent = live && d.dht_valid ? `${d.humidity_pct} %` : 'Không hợp lệ';\n      $('weather').textContent = `${d.rain ? 'Mưa' : 'Khô'} · ${d.dark ? 'Tối' : 'Sáng'}`;\n      $('request').textContent = `${d.cover_request} · ${d.cover_reason}`;\n      for (const key of ['mode','motion','fault']) $(key).textContent = d[key];\n      $('fault').dataset.fault = d.fault !== 'NONE';\n      $('limits').textContent = `Đóng: ${d.limit_covered ? 'ON' : 'OFF'} / Mở: ${d.limit_open ? 'ON' : 'OFF'}`;\n      $('motor').textContent = d.motor_output_enabled ? `Đầu ra motor đã bật · ${d.motor_active ? 'đang cấp lệnh chạy' : 'đang dừng'}` : 'Đầu ra motor đang khóa; trạng thái chuyển động chỉ là mô phỏng logic.';\n      $('updated').textContent = `Tuổi dữ liệu: ${Math.round(state.age_ms/1000)} giây · Dừng khẩn: ${d.estop ? 'KÍCH HOẠT' : 'bình thường'}`;\n      if (pending && pending.session !== d.session) { $('message').textContent = 'Thiết bị đã khởi động lại; không gửi lại lệnh.'; pending = null; }\n      if (pending && d.last_command_seq === pending.sequence) { $('message').textContent = `Thiết bị phản hồi: ${d.last_command_result}`; pending = null; }\n      if (pending && d.last_command_seq > pending.sequence) { $('message').textContent = 'Có lệnh mới hơn từ phiên điều khiển khác; xem trạng thái hiện tại.'; pending = null; }\n    }\n  } catch (_) { live = false; $('connection').textContent = 'Không truy cập được Node-RED'; $('connection').classList.remove('online'); }\n  buttons();\n}\ndocument.querySelectorAll('button[data-command]').forEach(button => button.addEventListener('click', async () => {\n  busy = true; buttons();\n  try {\n    const response = await fetch('/dryer/command', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command:button.dataset.command}), signal:AbortSignal.timeout(4000)});\n    const result = await response.json();\n    if (!response.ok) throw Error(result.error || 'Không gửi được lệnh');\n    pending = result;\n    $('message').textContent = `Đã xếp lệnh ${result.queued}; chờ thiết bị phản hồi.`;\n  } catch (error) { $('message').textContent = error.message; }\n  busy = false; buttons();\n}));\nrefresh(); setInterval(refresh, 2000);\n</script></body></html>\n",
+    "output": "str",
+    "x": 380,
+    "y": 160,
+    "wires": [
+      [
+        "html-headers"
+      ]
+    ]
+  },
+  {
+    "id": "html-headers",
+    "type": "change",
+    "z": "dryer-tab",
+    "name": "HTML headers",
+    "rules": [
+      {
+        "t": "set",
+        "p": "headers",
+        "pt": "msg",
+        "to": "{\"Content-Type\":\"text/html; charset=utf-8\",\"Cache-Control\":\"no-store\"}",
+        "tot": "json"
+      }
+    ],
+    "x": 610,
+    "y": 160,
+    "wires": [
+      [
+        "http-out"
+      ]
+    ]
+  },
+  {
+    "id": "state-in",
+    "type": "http in",
+    "z": "dryer-tab",
+    "name": "State API",
+    "url": "/dryer/state",
+    "method": "get",
+    "upload": false,
+    "x": 140,
+    "y": 240,
+    "wires": [
+      [
+        "state"
+      ]
+    ]
+  },
+  {
+    "id": "state",
+    "type": "function",
+    "z": "dryer-tab",
+    "name": "State freshness",
+    "func": "const state = flow.get('dryerState');\nconst age = state ? Date.now() - state.receivedAt : Infinity;\nmsg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };\nmsg.payload = { online: age >= 0 && age < 10000, age_ms: Number.isFinite(age) ? age : null,\n    telemetry: state ? state.data : null };\nreturn msg;\n",
+    "outputs": 1,
+    "x": 390,
+    "y": 240,
+    "wires": [
+      [
+        "http-out"
+      ]
+    ]
+  },
+  {
+    "id": "command-in",
+    "type": "http in",
+    "z": "dryer-tab",
+    "name": "Command API",
+    "url": "/dryer/command",
+    "method": "post",
+    "upload": false,
+    "x": 140,
+    "y": 320,
+    "wires": [
+      [
+        "command"
+      ]
+    ]
+  },
+  {
+    "id": "command",
+    "type": "function",
+    "z": "dryer-tab",
+    "name": "Validate and sequence command",
+    "func": "const allowed = ['STOP', 'AUTO', 'OPEN', 'CLOSE', 'RESET'];\nconst command = msg.payload && msg.payload.command;\nconst state = flow.get('dryerState');\nconst age = state ? Date.now() - state.receivedAt : Infinity;\nmsg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };\nif (!allowed.includes(command)) {\n    msg.statusCode = 400; msg.payload = { error: 'Unknown command' }; return [null, msg];\n}\nif (!state || age < 0 || age >= 10000) {\n    msg.statusCode = 409; msg.payload = { error: 'No fresh telemetry; use physical emergency stop' };\n    return [null, msg];\n}\nconst sequence = Math.max(Date.now(), state.data.last_command_seq + 1, (flow.get('dryerSeq') || 0) + 1);\nif (!Number.isSafeInteger(sequence)) {\n    msg.statusCode = 409; msg.payload = { error: 'Sequence exhausted; reboot device' }; return [null, msg];\n}\nflow.set('dryerSeq', sequence);\nconst outbound = { topic: 'dryer/command', payload: `${state.data.session} ${sequence} ${command}`,\n    qos: '1', retain: false };\nmsg.statusCode = 202;\nmsg.payload = { queued: command, sequence, session: state.data.session };\nreturn [outbound, msg];\n",
+    "outputs": 2,
+    "x": 420,
+    "y": 320,
+    "wires": [
+      [
+        "command-out"
+      ],
+      [
+        "http-out"
+      ]
+    ]
+  },
+  {
+    "id": "command-out",
+    "type": "mqtt out",
+    "z": "dryer-tab",
+    "name": "Non-retained command",
+    "topic": "dryer/command",
+    "qos": "1",
+    "retain": "false",
+    "broker": "dryer-broker",
+    "x": 720,
+    "y": 320,
+    "wires": []
+  },
+  {
+    "id": "http-out",
+    "type": "http response",
+    "z": "dryer-tab",
+    "name": "HTTP response",
+    "statusCode": "",
+    "headers": {},
+    "x": 760,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "dryer-ha-tab",
+    "type": "tab",
+    "label": "Dryer - Home Assistant bridge",
+    "disabled": false,
+    "info": "MQTT bridge for Home Assistant alongside the existing Node-RED dashboard."
+  },
+  {
+    "id": "dryer-ha-broker",
+    "type": "mqtt-broker",
+    "name": "Existing Mosquitto - HA bridge",
+    "broker": "mosquitto",
+    "port": "1883",
+    "clientid": "dryer-ha-bridge",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "15",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "willTopic": "dryer/ha/availability",
+    "willQos": "0",
+    "willPayload": "offline",
+    "willRetain": false,
+    "closeTopic": "dryer/ha/availability",
+    "closeQos": "0",
+    "closePayload": "offline",
+    "closeRetain": false
+  },
+  {
+    "id": "ha-telemetry",
+    "type": "mqtt in",
+    "z": "dryer-ha-tab",
+    "name": "Live firmware telemetry",
+    "topic": "dryer/telemetry",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "dryer-ha-broker",
+    "x": 130,
+    "y": 80,
+    "wires": [
+      [
+        "ha-normalize"
+      ]
+    ]
+  },
+  {
+    "id": "ha-normalize",
+    "type": "function",
+    "z": "dryer-ha-tab",
+    "name": "Validate and normalize",
+    "func": "// Accept live packets only. Replayed retained telemetry cannot reset freshness.\nif (msg.retain === true) return null;\nlet d = msg.payload;\nif (typeof d === 'string') { try { d = JSON.parse(d); } catch (_) { return null; } }\nif (!d || typeof d !== 'object' || Array.isArray(d)) return null;\nconst out = {};\nconst number = (v, min, max, integer = false) => {\n    if (typeof v !== 'number' && (typeof v !== 'string' || !v.trim())) return null;\n    const n = Number(v);\n    return Number.isFinite(n) && n >= min && n <= max && (!integer || Number.isInteger(n)) ? n : null;\n};\nconst bool = v => v === true || v === 1 || v === 'true' || v === '1' ? true :\n    v === false || v === 0 || v === 'false' || v === '0' ? false : null;\nif (typeof d.session !== 'string' || !/^[0-9a-f]{8}$/.test(d.session)) return null;\nout.session = d.session;\nfor (const key of ['rain_adc', 'light_adc']) {\n    out[key] = number(d[key], 0, 4095, true); if (out[key] === null) return null;\n}\nout.last_command_seq = number(d.last_command_seq, 0, Number.MAX_SAFE_INTEGER, true);\nif (out.last_command_seq === null) return null;\nfor (const key of ['rain', 'dark', 'dht_valid', 'safe_to_open', 'limit_covered', 'limit_open',\n    'estop', 'driver_fault', 'motor_output_enabled', 'motor_active']) {\n    out[key] = bool(d[key]); if (out[key] === null) return null;\n}\nif (out.dht_valid) {\n    out.temperature_c = number(d.temperature_c, -40, 80);\n    out.humidity_pct = number(d.humidity_pct, 0, 100);\n    if (out.temperature_c === null || out.humidity_pct === null) return null;\n} else { out.temperature_c = null; out.humidity_pct = null; }\nout.humidity_warning = out.dht_valid && out.humidity_pct >= 70;\nout.humidity_danger = out.dht_valid && out.humidity_pct > 80;\nconst enums = {\n    mode: ['STOPPED','AUTO','MANUAL_OPEN','MANUAL_CLOSE'],\n    motion: ['IDLE','OPENING','CLOSING','REVERSAL_WAIT','FAULT'],\n    fault: ['NONE','ESTOP','BOTH_LIMITS','MOTION_TIMEOUT','DRIVER_FAULT'],\n    cover_request: ['OPEN','CLOSE'],\n    cover_reason: ['NORMAL','RAIN','DARK','DHT_ERROR','HUMIDITY_WARNING','HUMIDITY_DANGER']\n};\nfor (const [key, values] of Object.entries(enums)) {\n    if (!values.includes(d[key])) return null; out[key] = d[key];\n}\nfor (const key of ['command_result','last_command_result']) {\n    if (typeof d[key] !== 'string' || !/^[A-Z_]{1,64}$/.test(d[key])) return null;\n    out[key] = d[key];\n}\nout.limit_fault = out.limit_open && out.limit_covered;\n// Never infer physical position or movement from a request/output alone.\nout.roof_position = out.limit_fault ? 'FAULT' : out.limit_covered ? 'closed' :\n    out.limit_open ? 'open' : 'unknown';\nout.safe_to_open = out.safe_to_open && !out.rain && !out.dark && out.dht_valid &&\n    out.humidity_pct < 70 && !out.limit_fault && !out.estop && !out.driver_fault && out.fault === 'NONE';\nmsg.payload = out;\nflow.set('dryerState', {data:out, receivedAt:Date.now()});\nreturn msg;\n",
+    "outputs": 1,
+    "x": 370,
+    "y": 80,
+    "wires": [
+      [
+        "ha-state",
+        "ha-debug"
+      ]
+    ]
+  },
+  {
+    "id": "ha-state",
+    "type": "function",
+    "z": "dryer-ha-tab",
+    "name": "HA state and device acknowledgement",
+    "func": "const state = flow.get('dryerState');\nif (!state) return null;\nconst pending = flow.get('haPending');\nlet ack = null;\nif (pending && state.data.session !== pending.session) {\n    ack = {...pending, result:'DEVICE_RESTARTED', completed_at:Date.now()};\n} else if (pending && state.data.last_command_seq === pending.sequence) {\n    ack = {...pending, result:state.data.last_command_result, completed_at:Date.now()};\n} else if (pending && state.data.last_command_seq > pending.sequence) {\n    ack = {...pending, result:'SUPERSEDED', completed_at:Date.now()};\n}\nif (ack) flow.set('haPending', null);\nreturn [{topic:'dryer/ha/state', payload:JSON.stringify(state.data), qos:'0', retain:false},\n    ack ? {topic:'dryer/ha/command_result', payload:JSON.stringify(ack), qos:'0', retain:false} : null];\n",
+    "outputs": 2,
+    "x": 650,
+    "y": 80,
+    "wires": [
+      [
+        "ha-mqtt-out"
+      ],
+      [
+        "ha-mqtt-out",
+        "ha-debug"
+      ]
+    ]
+  },
+  {
+    "id": "ha-command-in",
+    "type": "mqtt in",
+    "z": "dryer-ha-tab",
+    "name": "Home Assistant command requests",
+    "topic": "dryer/ha/command",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "dryer-ha-broker",
+    "x": 160,
+    "y": 180,
+    "wires": [
+      [
+        "ha-command"
+      ]
+    ]
+  },
+  {
+    "id": "ha-command",
+    "type": "function",
+    "z": "dryer-ha-tab",
+    "name": "TTL, replay, throttle, envelope",
+    "func": "const now = Date.now();\nlet request = msg.payload;\nif (typeof request === 'string') { try { request=JSON.parse(request); } catch (_) { request=null; } }\nconst command = request && request.command;\nconst allowed = ['OPEN','CLOSE','STOP','AUTO','MANUAL','RESET'];\nfunction reject(result) {\n    return [null, {topic:'dryer/ha/command_result',payload:JSON.stringify({command:command || 'INVALID',result,completed_at:now}),qos:'0',retain:false}];\n}\nif (msg.retain === true) return reject('REJECTED_RETAINED');\nif (!allowed.includes(command)) return reject('REJECTED_COMMAND');\nif (!Number.isSafeInteger(request.issued_at) || now-request.issued_at > 5000 || now-request.issued_at < -2000) return reject('REJECTED_EXPIRED');\nconst state = flow.get('dryerState');\nif (!state || now-state.receivedAt < 0 || now-state.receivedAt >= 10000) return reject('REJECTED_OFFLINE');\n// ESP32 is still the final interlock. Forward OPEN so the device can confirm a\n// rejection; this bridge never changes safe_to_open or bypasses its safety check.\nconst previous = flow.get('haLastSent');\nif (command !== 'STOP' && previous !== undefined && now-previous < 1000) return reject('REJECTED_RATE_LIMIT');\nconst pending = flow.get('haPending');\nif (command !== 'STOP' && pending) return reject('REJECTED_BUSY');\nconst sequence = Math.max(now, state.data.last_command_seq+1, (flow.get('haSequence') || 0)+1);\nif (!Number.isSafeInteger(sequence)) return reject('REJECTED_SEQUENCE');\nflow.set('haSequence', sequence); flow.set('haLastSent', now);\n// MANUAL selects a safe, stationary manual state; subsequent OPEN/CLOSE moves it.\nconst action = command === 'MANUAL' ? 'STOP' : command;\nconst queued = {command,session:state.data.session,sequence,issued_at:request.issued_at,sent_at:now};\nflow.set('haPending', queued);\nreturn [{topic:'dryer/command',payload:`${state.data.session} ${sequence} ${action}`,qos:'0',retain:false},\n    {topic:'dryer/ha/command_result',payload:JSON.stringify({...queued,result:'PENDING'}),qos:'0',retain:false}];\n",
+    "outputs": 2,
+    "x": 490,
+    "y": 180,
+    "wires": [
+      [
+        "ha-mqtt-out"
+      ],
+      [
+        "ha-mqtt-out",
+        "ha-debug"
+      ]
+    ]
+  },
+  {
+    "id": "ha-timer",
+    "type": "inject",
+    "z": "dryer-ha-tab",
+    "name": "Freshness / command timeout",
+    "props": [],
+    "repeat": "2",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "0.5",
+    "x": 160,
+    "y": 280,
+    "wires": [
+      [
+        "ha-watchdog"
+      ]
+    ]
+  },
+  {
+    "id": "ha-watchdog",
+    "type": "function",
+    "z": "dryer-ha-tab",
+    "name": "Offline after 10s, ACK timeout 5s",
+    "func": "const now = Date.now(), state = flow.get('dryerState');\nconst live = state && now-state.receivedAt >= 0 && now-state.receivedAt < 10000;\nconst pending = flow.get('haPending');\nlet timeout = null;\nif (pending && now-pending.sent_at >= 5000) {\n    timeout={topic:'dryer/ha/command_result',payload:JSON.stringify({...pending,result:'TIMEOUT',completed_at:now}),qos:'0',retain:false};\n    flow.set('haPending',null); // never retry a movement command automatically\n}\nreturn [{topic:'dryer/ha/availability',payload:live ? 'online' : 'offline',qos:'0',retain:false},\n    {topic:'dryer/ha/heartbeat',payload:live ? 'online' : 'offline',qos:'0',retain:false}, timeout];\n",
+    "outputs": 3,
+    "x": 500,
+    "y": 280,
+    "wires": [
+      [
+        "ha-mqtt-out"
+      ],
+      [
+        "ha-mqtt-out"
+      ],
+      [
+        "ha-mqtt-out",
+        "ha-debug"
+      ]
+    ]
+  },
+  {
+    "id": "ha-mqtt-out",
+    "type": "mqtt out",
+    "z": "dryer-ha-tab",
+    "name": "Non-retained state / commands",
+    "topic": "",
+    "qos": "0",
+    "retain": "false",
+    "broker": "dryer-ha-broker",
+    "x": 950,
+    "y": 180,
+    "wires": []
+  },
+  {
+    "id": "ha-debug",
+    "type": "debug",
+    "z": "dryer-ha-tab",
+    "name": "Dryer HA telemetry / ACK",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 960,
+    "y": 300,
+    "wires": []
+  }
+]

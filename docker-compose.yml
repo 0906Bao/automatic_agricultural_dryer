@@ -1,4 +1,17 @@
 services:
+  # HAOS runs in VMware. This is only a TCP access gateway, not HA Container.
+  ha-access:
+    image: nodered/node-red:latest
+    container_name: iot-ha-access
+    restart: unless-stopped
+    entrypoint: ["node", "/opt/dryer/ha-access.cjs", "${HA_VM_ADDRESS:-192.168.137.50}", "${HA_VM_PORT:-80}"]
+    healthcheck:
+      disable: true
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./tools/ha-access.cjs:/opt/dryer/ha-access.cjs:ro
+
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: iot-mosquitto
@@ -9,6 +22,14 @@ services:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto_data:/mosquitto/data
 
+  node-red-init:
+    image: nodered/node-red:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["if [ ! -e /data/flows.json ]; then cp /seed/flows.json /data/flows.json; fi"]
+    volumes:
+      - node_red_data:/data
+      - ./node-red/flows.json:/seed/flows.json:ro
+
   node-red:
     image: nodered/node-red:latest
     container_name: iot-node-red
@@ -18,7 +39,10 @@ services:
     volumes:
       - node_red_data:/data
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_started
+      node-red-init:
+        condition: service_completed_successfully
 
 volumes:
   mosquitto_data:
