@@ -6,7 +6,7 @@ Triển khai chính dùng **Home Assistant OS trên VMware**, theo lựa chọn 
 
 ```mermaid
 flowchart LR
-  ESP[ESP32 / Wokwi] -->|dryer/telemetry| MQTT[Mosquitto :1883]
+  ESP[ESP32 / Wokwi] -->|dryer/telemetry| MQTT[Mosquitto :8883]
   MQTT --> OLD[Node-RED flow hiện có]
   MQTT --> BRIDGE[Node-RED: Dryer - Home Assistant bridge]
   BRIDGE -->|dryer/ha/state + heartbeat| MQTT
@@ -29,7 +29,7 @@ Mất Home Assistant/Node-RED/MQTT không tắt tác vụ điều khiển tự �
 - Compose project thực tế: `automatic_agricultural_dryer`; network: `automatic_agricultural_dryer_default`.
 - Named volume thực tế: `automatic_agricultural_dryer_mosquitto_data`, `automatic_agricultural_dryer_node_red_data`. Broker còn có anonymous volume log cũ, được giữ nguyên.
 - Có bản Compose phụ trong `iot-platform/`; không chạy đồng thời với Compose gốc vì trùng cổng/tên container.
-- Mosquitto đang dùng `mosquitto/mosquitto.conf`, anonymous access cho lab. Đây chưa phải cấu hình xác thực production.
+- Mosquitto đang dùng `mosquitto/mosquitto.conf`, bắt buộc tài khoản và ACL. Node-RED chỉ bind localhost và yêu cầu đăng nhập; xem [Priority 1](SECURITY_PRIORITY1.md).
 - Node-RED đang lưu flow trong volume; flow trên đĩa project không tự ghi đè volume đã có. Khi triển khai đã sao lưu `/data` và thêm riêng tab bridge, giữ các node cũ.
 - GPIO giữ nguyên: mưa 34, LDR 35, DHT22 15, hành trình đóng 18/mở 19, LED 23. Ngưỡng 2200/2200/1800 và độ ẩm 70/80% không đổi.
 - Thay đổi an toàn có chủ đích: trước đây OPEN thủ công chỉ yêu cầu điều kiện an toàn tức thời; nay **mọi OPEN đều cần đủ 10 giây an toàn liên tục**, đúng yêu cầu tích hợp này. Home Assistant và Node-RED cũng nhận cùng interlock tại ESP32.
@@ -38,11 +38,11 @@ Mất Home Assistant/Node-RED/MQTT không tắt tác vụ điều khiển tự �
 
 | Thành phần | Địa chỉ / lưu trữ |
 | --- | --- |
-| Mosquitto trong Docker | service `mosquitto`, Windows/LAN port 1883 |
-| Wokwi | `host.wokwi.internal:1883`, cần Private IoT Gateway |
-| Node-RED trong Docker | `http://localhost:1880`, kết nối broker `mosquitto:1883` |
+| Mosquitto trong Docker | service `mosquitto`, Windows/LAN port 8883 |
+| Wokwi | `host.wokwi.internal:8883`, cần Private IoT Gateway |
+| Node-RED trong Docker | `http://localhost:1880`, kết nối broker `mosquitto:8883` |
 | Home Assistant OS | VM NAT `192.168.137.50`, HTTP 80, gateway `192.168.137.2` |
-| MQTT từ VM | **`192.168.137.1:1883`** (IP host Windows trên VMnet8), không dùng localhost hoặc tên Docker |
+| MQTT từ VM | **`192.168.137.1:8883`** (IP host Windows trên VMnet8), không dùng localhost hoặc tên Docker |
 | Gateway web | `iot-ha-access`, port Windows 8123 → VM 80 |
 | Máy tính | `http://localhost:8123` |
 | Điện thoại | `http://192.168.1.4:8123` tại thời điểm triển khai; kiểm tra lại IP Wi-Fi nếu đổi mạng |
@@ -50,7 +50,7 @@ Mất Home Assistant/Node-RED/MQTT không tắt tác vụ điều khiển tự �
 | Đĩa máy ảo | `%LOCALAPPDATA%\AutomaticAgriculturalDryer\HAOS\` |
 | Cấu hình nguồn | `home-assistant/configuration.yaml`, `packages/dryer.yaml`, `dashboards/dryer.yaml` |
 
-IP NAT/LAN trên là giá trị đã khảo sát trên máy này, không phải giá trị dùng chung mọi Windows. `.env.example` chỉ chứa `HA_VM_ADDRESS` và `HA_VM_PORT`; `.env` được Git bỏ qua. Nếu dùng bridged network thay NAT, thay địa chỉ MQTT bằng IP LAN của Windows và đặt `HA_VM_ADDRESS` thành IP mới của VM. Không đổi cổng 1883 của Wokwi.
+IP NAT/LAN trên là giá trị đã khảo sát trên máy này, không phải giá trị dùng chung mọi Windows. `.env.example` chỉ chứa `HA_VM_ADDRESS` và `HA_VM_PORT`; `.env` được Git bỏ qua. Nếu dùng bridged network thay NAT, thay địa chỉ MQTT bằng IP LAN của Windows và đặt `HA_VM_ADDRESS` thành IP mới của VM. Không đổi cổng 8883 của Wokwi.
 
 Home Assistant OS/Core từ 2026.8 mặc định nghe cổng **80**, khác với các hướng dẫn cũ dùng 8123. Gateway của project công khai **8123 chỉ trên máy/LAN**, chuyển vào VM:80. Cấu hình HTTP hiện nằm trong Settings → System → Network; không thêm block `http.server_port` cũ vào YAML. Xem [HTTP settings chính thức](https://www.home-assistant.io/integrations/http/).
 
@@ -116,7 +116,7 @@ Bật Debug node `Dryer HA telemetry / ACK` trong tab mới để xem dữ liệ
 
 ## Home Assistant entities
 
-MQTT broker được thêm trong Settings → Devices & services → Add integration → MQTT. Với VM NAT hiện tại: broker `192.168.137.1`, port `1883`. Đây là broker Docker hiện có, không cài Mosquitto app/broker thứ hai trong HAOS. Credentials để trống chỉ cho lab anonymous hiện tại; dùng tài khoản riêng khi bật xác thực.
+MQTT broker được thêm trong Settings → Devices & services → Add integration → MQTT. Với VM NAT hiện tại: broker `192.168.137.1`, port `8883`, CA custom `.local/security/pki/ca.crt`, bật xác minh chứng thư. Đây là broker Docker hiện có, không cài Mosquitto app/broker thứ hai trong HAOS. Dùng tài khoản riêng `dryer-homeassistant` đã provision; anonymous bị từ chối. Xem [TLS](SECURITY_TLS.md).
 
 Các entity có `unique_id` và `default_entity_id` để ổn định tên lần đầu. Nếu instance đã có entity trùng tên, HA có thể thêm hậu tố: kiểm tra Entity Registry rồi chỉnh lại ID dùng trong dashboard.
 
@@ -174,13 +174,13 @@ Persistent notification tiếng Việt khi mưa, độ ẩm >=70%, >80%, DHT l�
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/enable-ha-lan.ps1
 ```
 
-Không tắt toàn bộ firewall, không forward port Internet. Với broker từ VM NAT, nếu bị chặn port 1883, tạo rule riêng giới hạn nguồn subnet VMnet8 `192.168.137.0/24`, thay bằng subnet thực tế của máy. Không thay network profile Public thành Private trừ khi thực sự tin cậy mạng đó.
+Không tắt toàn bộ firewall, không forward port Internet. Với broker từ VM NAT, nếu bị chặn port 8883, tạo rule riêng giới hạn nguồn subnet VMnet8 `192.168.137.0/24`, thay bằng subnet thực tế của máy. Không thay network profile Public thành Private trừ khi thực sự tin cậy mạng đó.
 
 ## Bảo mật và backup
 
-Anonymous MQTT hiện tại chỉ dùng để giữ tương thích Wokwi và flow cũ trong lab. **Chưa đạt tiêu chuẩn production**. Không tự bật auth giữa chừng khiến firmware/Node-RED đang dùng mất kết nối. Đã thêm `mosquitto/mosquitto.secure.conf`, `mosquitto/acl.example`, `compose.mqtt-secure.yml` làm cấu hình opt-in. Tạo tài khoản riêng ESP32/Node-RED/HA trong `.local/mosquitto/passwords`, bằng `mosquitto_passwd` tương tác (không đưa mật khẩu lên command line/history); kiểm tra quyền đọc file của UID Mosquitto. Cập nhật MQTT_USER/PASSWORD trong secrets.local.h, credentials **mọi** broker node Node-RED, và MQTT integration HA trước khi chuyển sang overlay secure. Lưu password hash/backup cấu hình ngoài Git. ACL mẫu chỉ cho HA ghi request, không được ghi `dryer/command` hoặc giả telemetry.
+Priority 1 đã được triển khai: tài khoản riêng ESP32/Node-RED/HA, ACL và quản trị Node-RED có xác thực. Xem [cấu hình, credentials và backup](SECURITY_PRIORITY1.md). Hash mật khẩu nằm trong `.local/security/passwords`; cấu hình Compose gốc cũng yêu cầu xác thực, không cần overlay để bật. Không đưa mật khẩu lên command line/history. ACL chỉ cho HA ghi request, không được ghi `dryer/command` hoặc giả telemetry.
 
-Kiểm tra overlay trước khi dùng: `docker compose -f docker-compose.yml -f compose.mqtt-secure.yml config --quiet`. Khi bật, thao tác reload/recreate riêng broker sẽ gây ngắt MQTT ngắn và cần lịch bảo trì; không thực hiện âm thầm trong giai đoạn chạy song song. Các kết nối MQTT/HTTP hiện chưa có TLS trong LAN.
+Kiểm tra overlay trước khi dùng: `docker compose -f docker-compose.yml -f compose.mqtt-secure.yml config --quiet`. MQTT hiện dùng TLS cổng 8883; các kết nối HTTP giao diện vẫn chưa có TLS. Thay đổi broker có thể gây ngắt MQTT ngắn và cần thực hiện trong lịch bảo trì.
 
 Trước triển khai, dữ liệu Node-RED và cấu hình broker được sao lưu trong `backups/before-home-assistant-*`; mỗi lần merge bridge có `backups/node-red-*`. Những thư mục này được Git bỏ qua và có thể chứa credentials, không chia sẻ công khai.
 
@@ -196,7 +196,7 @@ Trước triển khai, dữ liệu Node-RED và cấu hình broker được sao 
 | VM báo No PCIe slot / crash khi bật | Card E1000 trong script; không dùng lại NIC E1000e thiếu root ports/slot từ VMX tối giản |
 | localhost:8123 chuyển sang port 80 | HAOS/Core từ 2026.8 mặc định HTTP 80; gateway phải dùng HA_VM_PORT=80. Cấu hình HTTP mới nằm ở Settings → System → Network, không dùng YAML http cũ |
 | Không mở được 8123 | VM đã boot chưa; `docker logs iot-ha-access`; HA_VM_ADDRESS đúng; Docker Desktop chạy |
-| MQTT không kết nối | VM dùng IP Windows VMnet8, không dùng localhost/mosquitto; kiểm tra Firewall1883 và credentials |
+| MQTT không kết nối | VM dùng IP Windows VMnet8, không dùng localhost/mosquitto; kiểm tra Firewall8883 và credentials |
 | Entity unavailable | Có firmware mới với safe_to_open; bridge validator/Debug; telemetry mới <10 giây; HA MQTT integration đã thêm |
 | OPEN bị từ chối | Chờ 10 giây khô/sáng/DHT hợp lệ/RH<70; kiểm tra estop/driver/limit fault; RESET không tự chạy |
 | Cover unknown | Chưa có công tắc xác nhận; không phải lỗi UI; cả hai ON cần kiểm tra cơ/điện |

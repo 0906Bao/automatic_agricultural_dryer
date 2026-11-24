@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
+#include <time.h>
 #include "secrets.h"
 #include "hardware.h"
 #include "CoverController.h"
@@ -22,7 +23,7 @@ constexpr char TOPIC_COMMAND[] = "dryer/command";
 constexpr char TOPIC_STATUS[] = "dryer/status";
 constexpr char TOPIC_AVAILABILITY[] = "dryer/availability";
 
-WiFiClient wifiClient;
+WiFiClientSecure wifiClient;
 PubSubClient mqtt(wifiClient);
 DHTesp dht;
 dryer::WeatherPolicy weather;
@@ -40,6 +41,16 @@ uint32_t decisionUpdatedAt = 0;
 char sessionId[9];
 const char* commandResult = "BOOT_STOPPED";
 const char* lastMqttCommandResult = "NONE";
+uint32_t rejectedCommands = 0, lastSecurityLogAt = 0;
+
+void recordCommandRejection() {
+  ++rejectedCommands;
+  if (rejectedCommands == 1 || uint32_t(millis() - lastSecurityLogAt) >= 5000) {
+    lastSecurityLogAt = millis();
+    Serial.printf("SECURITY command_rejected reason=%s total=%lu\n", commandResult,
+                  (unsigned long)rejectedCommands);
+  }
+}
 
 // Called only inside the short critical section. No network/Serial/delays here.
 void readSafetyInputs(dryer::Inputs& in) {
@@ -98,11 +109,13 @@ void runCommand(dryer::Command cmd) {
   Serial.printf("Command: %s\n", commandResult);
 }
 
+void publishTelemetry();
+
 void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   if (strcmp(topic, TOPIC_COMMAND)) return;
   char envelope[48];
   if (!length || length >= sizeof(envelope) || memchr(payload, '\0', length)) {
-    commandResult = "REJECTED_ENVELOPE"; return;
+    commandResult = "REJECTED_ENVELOPE"; recordCommandRejection(); return;
   }
   memcpy(envelope, payload, length);
   envelope[length] = '\0';
@@ -112,7 +125,17 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
     runCommand(cmd);
     lastMqttCommandResult = commandResult;
   }
+  if (!strncmp(commandResult, "REJECTED_", 9)) recordCommandRejection();
   mqtt.publish(TOPIC_STATUS, commandResult, false);
+  // Publish the final acknowledgement before starting a fresh replay domain.
+  // Rotating well before exhaustion means STOP can never be locked by overflow.
+  if (commandGate.rotationRequired()) {
+    publishTelemetry();
+    snprintf(sessionId, sizeof(sessionId), "%08lx", (unsigned long)esp_random());
+    commandGate.lastSequence = 0;
+    Serial.println("SECURITY command_session_rotated");
+    publishTelemetry();
+  }
 }
 
 int readAverage(uint8_t pin) {
@@ -185,6 +208,8 @@ void serviceConnections() {
     }
     return;
   }
+  // A valid wall clock is necessary for certificate expiry verification.
+  if (time(nullptr) < 1700000000 || !strlen(MQTT_CA_CERT)) return;
   // Avoid long reconnection work while the actuator is moving.
   dryer::Inputs in;
   const auto state = snapshot(in);
@@ -201,6 +226,8 @@ void serviceConnections() {
       mqtt.subscribe(TOPIC_COMMAND, 1);
       mqtt.publish(TOPIC_STATUS, "connected", false);
       publishTelemetry();
+    } else {
+      Serial.printf("SECURITY mqtt_connection_rejected state=%d\n", mqtt.state());
     }
   }
 }
@@ -222,6 +249,9 @@ void setup() {
   dht.setup(DHT_PIN, DHTesp::DHT22);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD, WIFI_CHANNEL);
+  configTime(0, 0, "time.cloudflare.com", "pool.ntp.org");
+  wifiClient.setCACert(MQTT_CA_CERT);
+  wifiClient.setHandshakeTimeout(5);
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);
   mqtt.setBufferSize(1280); mqtt.setSocketTimeout(1); mqtt.setKeepAlive(30);

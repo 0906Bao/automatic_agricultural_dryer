@@ -1,8 +1,8 @@
-# Opt-in only, after configuring ESP32, ALL Node-RED MQTT configs and HA accounts.
+# Compatibility overlay. The base Compose configuration now also requires auth.
 # Usage: docker compose -f docker-compose.yml -f compose.mqtt-secure.yml up -d mosquitto
 services:
   mosquitto:
     volumes:
       - ./mosquitto/mosquitto.secure.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./.local/mosquitto/passwords:/mosquitto/config/passwords:ro
+      - ./.local/security/passwords:/mosquitto/config/passwords:ro
       - ./mosquitto/acl.example:/mosquitto/config/acl:ro

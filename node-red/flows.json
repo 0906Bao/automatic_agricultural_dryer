@@ -7,14 +7,25 @@
     "info": "Local lab dashboard at /dryer. Commands are never retained."
   },
   {
+    "id": "dryer-mqtt-tls",
+    "type": "tls-config",
+    "name": "Dryer private CA",
+    "ca": "/run/dryer/ca.crt",
+    "certType": "files",
+    "verifyservercert": true,
+    "servername": "mosquitto"
+  },
+  {
     "id": "dryer-broker",
     "type": "mqtt-broker",
     "name": "Mosquitto (Docker)",
     "broker": "mosquitto",
-    "port": "1883",
+    "port": "8883",
     "clientid": "dryer-node-red",
     "autoConnect": true,
-    "usetls": false,
+    "usetls": true,
+    "verifyservercert": true,
+    "tls": "dryer-mqtt-tls",
     "protocolVersion": "4",
     "keepalive": "30",
     "cleansession": true,
@@ -42,7 +53,7 @@
     "type": "function",
     "z": "dryer-tab",
     "name": "Cache fresh telemetry",
-    "func": "const data = msg.payload;\nif (!data || typeof data !== 'object' || Array.isArray(data) ||\n    !/^[0-9a-f]{8}$/.test(data.session) ||\n    !Number.isSafeInteger(data.last_command_seq) || data.last_command_seq < 0) return null;\nflow.set('dryerState', { data, receivedAt: Date.now() });\nreturn null;\n",
+    "func": "const data = msg.payload;\nif (msg.retain === true) return null;\nif (!data || typeof data !== 'object' || Array.isArray(data) ||\n    !/^[0-9a-f]{8}$/.test(data.session) ||\n    !Number.isSafeInteger(data.last_command_seq) || data.last_command_seq < 0 || data.last_command_seq > 4294967295) return null;\nflow.set('dryerState', { data, receivedAt: Date.now() });\nreturn null;\n",
     "outputs": 1,
     "x": 390,
     "y": 80,
@@ -159,7 +170,7 @@
     "type": "function",
     "z": "dryer-tab",
     "name": "Validate and sequence command",
-    "func": "const allowed = ['STOP', 'AUTO', 'OPEN', 'CLOSE', 'RESET'];\nconst command = msg.payload && msg.payload.command;\nconst state = flow.get('dryerState');\nconst age = state ? Date.now() - state.receivedAt : Infinity;\nmsg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };\nif (!allowed.includes(command)) {\n    msg.statusCode = 400; msg.payload = { error: 'Unknown command' }; return [null, msg];\n}\nif (!state || age < 0 || age >= 10000) {\n    msg.statusCode = 409; msg.payload = { error: 'No fresh telemetry; use physical emergency stop' };\n    return [null, msg];\n}\nconst sequence = Math.max(Date.now(), state.data.last_command_seq + 1, (flow.get('dryerSeq') || 0) + 1);\nif (!Number.isSafeInteger(sequence)) {\n    msg.statusCode = 409; msg.payload = { error: 'Sequence exhausted; reboot device' }; return [null, msg];\n}\nflow.set('dryerSeq', sequence);\nconst outbound = { topic: 'dryer/command', payload: `${state.data.session} ${sequence} ${command}`,\n    qos: '1', retain: false };\nmsg.statusCode = 202;\nmsg.payload = { queued: command, sequence, session: state.data.session };\nreturn [outbound, msg];\n",
+    "func": "const allowed = ['STOP', 'AUTO', 'OPEN', 'CLOSE', 'RESET'];\nconst command = msg.payload && msg.payload.command;\nconst state = flow.get('dryerState');\nconst age = state ? Date.now() - state.receivedAt : Infinity;\nmsg.headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };\nfunction audit(reason) {\n    if (typeof node !== 'undefined') node.warn(JSON.stringify({event:'command_rejected',source:'http',reason,\n        command:allowed.includes(command) ? command : 'INVALID'}));\n}\nif (!allowed.includes(command)) {\n    audit('INVALID_COMMAND');\n    msg.statusCode = 400; msg.payload = { error: 'Unknown command' }; return [null, msg];\n}\nif (!state || age < 0 || age >= 10000) {\n    audit('OFFLINE');\n    msg.statusCode = 409; msg.payload = { error: 'No fresh telemetry; use physical emergency stop' };\n    return [null, msg];\n}\nconst acknowledged = state.data.last_command_seq;\nconst reserved = flow.get('dryerCommandSequence');\nconst base = reserved && reserved.session === state.data.session && reserved.value <= acknowledged + 63 ?\n    Math.max(acknowledged, reserved.value) : acknowledged;\nconst sequence = base + 1;\nif (!Number.isSafeInteger(acknowledged) || acknowledged < 0 || sequence > 4294967295) {\n    audit('INVALID_SEQUENCE');\n    msg.statusCode = 409; msg.payload = { error: 'Waiting for a valid device session' }; return [null, msg];\n}\nflow.set('dryerCommandSequence', {session:state.data.session, value:sequence});\nconst outbound = { topic: 'dryer/command', payload: `${state.data.session} ${sequence} ${command}`,\n    qos: '1', retain: false };\nmsg.statusCode = 202;\nmsg.payload = { queued: command, sequence, session: state.data.session };\nreturn [outbound, msg];\n",
     "outputs": 2,
     "x": 420,
     "y": 320,
@@ -208,10 +219,12 @@
     "type": "mqtt-broker",
     "name": "Existing Mosquitto - HA bridge",
     "broker": "mosquitto",
-    "port": "1883",
+    "port": "8883",
     "clientid": "dryer-ha-bridge",
     "autoConnect": true,
-    "usetls": false,
+    "usetls": true,
+    "verifyservercert": true,
+    "tls": "dryer-mqtt-tls",
     "protocolVersion": "4",
     "keepalive": "15",
     "cleansession": true,
@@ -247,7 +260,7 @@
     "type": "function",
     "z": "dryer-ha-tab",
     "name": "Validate and normalize",
-    "func": "// Accept live packets only. Replayed retained telemetry cannot reset freshness.\nif (msg.retain === true) return null;\nlet d = msg.payload;\nif (typeof d === 'string') { try { d = JSON.parse(d); } catch (_) { return null; } }\nif (!d || typeof d !== 'object' || Array.isArray(d)) return null;\nconst out = {};\nconst number = (v, min, max, integer = false) => {\n    if (typeof v !== 'number' && (typeof v !== 'string' || !v.trim())) return null;\n    const n = Number(v);\n    return Number.isFinite(n) && n >= min && n <= max && (!integer || Number.isInteger(n)) ? n : null;\n};\nconst bool = v => v === true || v === 1 || v === 'true' || v === '1' ? true :\n    v === false || v === 0 || v === 'false' || v === '0' ? false : null;\nif (typeof d.session !== 'string' || !/^[0-9a-f]{8}$/.test(d.session)) return null;\nout.session = d.session;\nfor (const key of ['rain_adc', 'light_adc']) {\n    out[key] = number(d[key], 0, 4095, true); if (out[key] === null) return null;\n}\nout.last_command_seq = number(d.last_command_seq, 0, Number.MAX_SAFE_INTEGER, true);\nif (out.last_command_seq === null) return null;\nfor (const key of ['rain', 'dark', 'dht_valid', 'safe_to_open', 'limit_covered', 'limit_open',\n    'estop', 'driver_fault', 'motor_output_enabled', 'motor_active']) {\n    out[key] = bool(d[key]); if (out[key] === null) return null;\n}\nif (out.dht_valid) {\n    out.temperature_c = number(d.temperature_c, -40, 80);\n    out.humidity_pct = number(d.humidity_pct, 0, 100);\n    if (out.temperature_c === null || out.humidity_pct === null) return null;\n} else { out.temperature_c = null; out.humidity_pct = null; }\nout.humidity_warning = out.dht_valid && out.humidity_pct >= 70;\nout.humidity_danger = out.dht_valid && out.humidity_pct > 80;\n// Older firmware has no countdown. Keep it unknown instead of inventing a timer.\nout.open_wait_remaining_s = d.open_wait_remaining_s === undefined ? null :\n    number(d.open_wait_remaining_s, -1, 30, true);\nif (d.open_wait_remaining_s !== undefined && out.open_wait_remaining_s === null) return null;\nconst enums = {\n    mode: ['STOPPED','AUTO','MANUAL_OPEN','MANUAL_CLOSE'],\n    motion: ['IDLE','OPENING','CLOSING','REVERSAL_WAIT','FAULT'],\n    fault: ['NONE','ESTOP','BOTH_LIMITS','MOTION_TIMEOUT','DRIVER_FAULT'],\n    cover_request: ['OPEN','CLOSE'],\n    cover_reason: ['NORMAL','WAITING_SAFE','RAIN','DARK','DHT_ERROR','HUMIDITY_WARNING','HUMIDITY_DANGER']\n};\nfor (const [key, values] of Object.entries(enums)) {\n    if (!values.includes(d[key])) return null; out[key] = d[key];\n}\nfor (const key of ['command_result','last_command_result']) {\n    if (typeof d[key] !== 'string' || !/^[A-Z_]{1,64}$/.test(d[key])) return null;\n    out[key] = d[key];\n}\nout.limit_fault = out.limit_open && out.limit_covered;\n// Never infer physical position or movement from a request/output alone.\nout.roof_position = out.limit_fault ? 'FAULT' : out.limit_covered ? 'closed' :\n    out.limit_open ? 'open' : 'unknown';\nout.safe_to_open = out.safe_to_open && !out.rain && !out.dark && out.dht_valid &&\n    out.humidity_pct < 70 && !out.limit_fault && !out.estop && !out.driver_fault && out.fault === 'NONE';\nconst humidityAdvisory = out.dht_valid && out.humidity_pct >= 70 && out.humidity_pct <= 80 && !out.rain && !out.dark;\n// Presentation compatibility for older firmware. This never sends a command.\nif (humidityAdvisory) { out.cover_request = 'CLOSE'; out.cover_reason = 'HUMIDITY_WARNING'; }\nout.safety_status = out.rain || out.dark || !out.dht_valid || out.humidity_danger ||\n    out.limit_fault || out.estop || out.driver_fault || out.fault !== 'NONE' ? 'DANGER' :\n    humidityAdvisory ? 'WARNING' : out.safe_to_open ? 'SAFE' : 'WAITING';\nmsg.payload = out;\nflow.set('dryerState', {data:out, receivedAt:Date.now()});\nreturn msg;\n",
+    "func": "// Accept live packets only. Replayed retained telemetry cannot reset freshness.\nif (msg.retain === true) return null;\nlet d = msg.payload;\nif (typeof d === 'string') { try { d = JSON.parse(d); } catch (_) { return null; } }\nif (!d || typeof d !== 'object' || Array.isArray(d)) return null;\nconst out = {};\nconst number = (v, min, max, integer = false) => {\n    if (typeof v !== 'number' && (typeof v !== 'string' || !v.trim())) return null;\n    const n = Number(v);\n    return Number.isFinite(n) && n >= min && n <= max && (!integer || Number.isInteger(n)) ? n : null;\n};\nconst bool = v => v === true || v === 1 || v === 'true' || v === '1' ? true :\n    v === false || v === 0 || v === 'false' || v === '0' ? false : null;\nif (typeof d.session !== 'string' || !/^[0-9a-f]{8}$/.test(d.session)) return null;\nout.session = d.session;\nfor (const key of ['rain_adc', 'light_adc']) {\n    out[key] = number(d[key], 0, 4095, true); if (out[key] === null) return null;\n}\nout.last_command_seq = number(d.last_command_seq, 0, 4294967295, true);\nif (out.last_command_seq === null) return null;\nfor (const key of ['rain', 'dark', 'dht_valid', 'safe_to_open', 'limit_covered', 'limit_open',\n    'estop', 'driver_fault', 'motor_output_enabled', 'motor_active']) {\n    out[key] = bool(d[key]); if (out[key] === null) return null;\n}\nif (out.dht_valid) {\n    out.temperature_c = number(d.temperature_c, -40, 80);\n    out.humidity_pct = number(d.humidity_pct, 0, 100);\n    if (out.temperature_c === null || out.humidity_pct === null) return null;\n} else { out.temperature_c = null; out.humidity_pct = null; }\nout.humidity_warning = out.dht_valid && out.humidity_pct >= 70;\nout.humidity_danger = out.dht_valid && out.humidity_pct > 80;\n// Older firmware has no countdown. Keep it unknown instead of inventing a timer.\nout.open_wait_remaining_s = d.open_wait_remaining_s === undefined ? null :\n    number(d.open_wait_remaining_s, -1, 30, true);\nif (d.open_wait_remaining_s !== undefined && out.open_wait_remaining_s === null) return null;\nconst enums = {\n    mode: ['STOPPED','AUTO','MANUAL_OPEN','MANUAL_CLOSE'],\n    motion: ['IDLE','OPENING','CLOSING','REVERSAL_WAIT','FAULT'],\n    fault: ['NONE','ESTOP','BOTH_LIMITS','MOTION_TIMEOUT','DRIVER_FAULT'],\n    cover_request: ['OPEN','CLOSE'],\n    cover_reason: ['NORMAL','WAITING_SAFE','RAIN','DARK','DHT_ERROR','HUMIDITY_WARNING','HUMIDITY_DANGER']\n};\nfor (const [key, values] of Object.entries(enums)) {\n    if (!values.includes(d[key])) return null; out[key] = d[key];\n}\nfor (const key of ['command_result','last_command_result']) {\n    if (typeof d[key] !== 'string' || !/^[A-Z_]{1,64}$/.test(d[key])) return null;\n    out[key] = d[key];\n}\nout.limit_fault = out.limit_open && out.limit_covered;\n// Never infer physical position or movement from a request/output alone.\nout.roof_position = out.limit_fault ? 'FAULT' : out.limit_covered ? 'closed' :\n    out.limit_open ? 'open' : 'unknown';\nout.safe_to_open = out.safe_to_open && !out.rain && !out.dark && out.dht_valid &&\n    out.humidity_pct < 70 && !out.limit_fault && !out.estop && !out.driver_fault && out.fault === 'NONE';\nconst humidityAdvisory = out.dht_valid && out.humidity_pct >= 70 && out.humidity_pct <= 80 && !out.rain && !out.dark;\n// Presentation compatibility for older firmware. This never sends a command.\nif (humidityAdvisory) { out.cover_request = 'CLOSE'; out.cover_reason = 'HUMIDITY_WARNING'; }\nout.safety_status = out.rain || out.dark || !out.dht_valid || out.humidity_danger ||\n    out.limit_fault || out.estop || out.driver_fault || out.fault !== 'NONE' ? 'DANGER' :\n    humidityAdvisory ? 'WARNING' : out.safe_to_open ? 'SAFE' : 'WAITING';\nmsg.payload = out;\nflow.set('dryerState', {data:out, receivedAt:Date.now()});\nreturn msg;\n",
     "outputs": 1,
     "x": 370,
     "y": 80,
@@ -299,7 +312,7 @@
     "type": "function",
     "z": "dryer-ha-tab",
     "name": "TTL, replay, throttle, envelope",
-    "func": "const now = Date.now();\nlet request = msg.payload;\nif (typeof request === 'string') { try { request=JSON.parse(request); } catch (_) { request=null; } }\nconst command = request && request.command;\nconst allowed = ['OPEN','CLOSE','STOP','AUTO','MANUAL','RESET'];\nfunction reject(result) {\n    return [null, {topic:'dryer/ha/command_result',payload:JSON.stringify({command:command || 'INVALID',result,completed_at:now}),qos:'0',retain:false}];\n}\nif (msg.retain === true) return reject('REJECTED_RETAINED');\nif (!allowed.includes(command)) return reject('REJECTED_COMMAND');\nif (!Number.isSafeInteger(request.issued_at) || now-request.issued_at > 5000 || now-request.issued_at < -2000) return reject('REJECTED_EXPIRED');\nconst state = flow.get('dryerState');\nif (!state || now-state.receivedAt < 0 || now-state.receivedAt >= 10000) return reject('REJECTED_OFFLINE');\n// ESP32 is still the final interlock. Forward OPEN so the device can confirm a\n// rejection; this bridge never changes safe_to_open or bypasses its safety check.\nconst previous = flow.get('haLastSent');\nif (command !== 'STOP' && previous !== undefined && now-previous < 1000) return reject('REJECTED_RATE_LIMIT');\nconst pending = flow.get('haPending');\nif (command !== 'STOP' && pending) return reject('REJECTED_BUSY');\nconst sequence = Math.max(now, state.data.last_command_seq+1, (flow.get('haSequence') || 0)+1);\nif (!Number.isSafeInteger(sequence)) return reject('REJECTED_SEQUENCE');\nflow.set('haSequence', sequence); flow.set('haLastSent', now);\n// MANUAL selects a safe, stationary manual state; subsequent OPEN/CLOSE moves it.\nconst action = command === 'MANUAL' ? 'STOP' : command;\nconst queued = {command,session:state.data.session,sequence,issued_at:request.issued_at,sent_at:now};\nflow.set('haPending', queued);\nreturn [{topic:'dryer/command',payload:`${state.data.session} ${sequence} ${action}`,qos:'0',retain:false},\n    {topic:'dryer/ha/command_result',payload:JSON.stringify({...queued,result:'PENDING'}),qos:'0',retain:false}];\n",
+    "func": "const now = Date.now();\nlet request = msg.payload;\nif (typeof request === 'string') { try { request=JSON.parse(request); } catch (_) { request=null; } }\nconst command = request && request.command;\nconst allowed = ['OPEN','CLOSE','STOP','AUTO','MANUAL','RESET'];\nfunction reject(result) {\n    if (typeof node !== 'undefined') node.warn(JSON.stringify({event:'command_rejected',source:'homeassistant',reason:result,\n        command:allowed.includes(command) ? command : 'INVALID'}));\n    return [null, {topic:'dryer/ha/command_result',payload:JSON.stringify({command:command || 'INVALID',result,completed_at:now}),qos:'0',retain:false}];\n}\nif (msg.retain === true) return reject('REJECTED_RETAINED');\nif (!allowed.includes(command)) return reject('REJECTED_COMMAND');\nif (!Number.isSafeInteger(request.issued_at) || now-request.issued_at > 5000 || now-request.issued_at < -2000) return reject('REJECTED_EXPIRED');\nconst state = flow.get('dryerState');\nif (!state || now-state.receivedAt < 0 || now-state.receivedAt >= 10000) return reject('REJECTED_OFFLINE');\n// ESP32 is still the final interlock. Forward OPEN so the device can confirm a\n// rejection; this bridge never changes safe_to_open or bypasses its safety check.\nconst previous = flow.get('haLastSent');\nif (command !== 'STOP' && previous !== undefined && now-previous < 1000) return reject('REJECTED_RATE_LIMIT');\nconst pending = flow.get('haPending');\nif (command !== 'STOP' && pending) return reject('REJECTED_BUSY');\nconst acknowledged = state.data.last_command_seq;\nconst reserved = flow.get('dryerCommandSequence');\nconst base = reserved && reserved.session === state.data.session && reserved.value <= acknowledged + 63 ?\n    Math.max(acknowledged, reserved.value) : acknowledged;\nconst sequence = base + 1;\nif (!Number.isSafeInteger(acknowledged) || acknowledged < 0 || sequence > 4294967295) return reject('REJECTED_SEQUENCE');\nflow.set('dryerCommandSequence', {session:state.data.session,value:sequence}); flow.set('haLastSent', now);\n// MANUAL selects a safe, stationary manual state; subsequent OPEN/CLOSE moves it.\nconst action = command === 'MANUAL' ? 'STOP' : command;\nconst queued = {command,session:state.data.session,sequence,issued_at:request.issued_at,sent_at:now};\nflow.set('haPending', queued);\nreturn [{topic:'dryer/command',payload:`${state.data.session} ${sequence} ${action}`,qos:'0',retain:false},\n    {topic:'dryer/ha/command_result',payload:JSON.stringify({...queued,result:'PENDING'}),qos:'0',retain:false}];\n",
     "outputs": 2,
     "x": 490,
     "y": 180,
@@ -380,5 +393,35 @@
     "x": 960,
     "y": 300,
     "wires": []
+  },
+  {
+    "id": "security-status-in",
+    "type": "mqtt in",
+    "z": "dryer-ha-tab",
+    "name": "Device security events",
+    "topic": "dryer/status",
+    "qos": "0",
+    "datatype": "utf8",
+    "broker": "dryer-ha-broker",
+    "x": 150,
+    "y": 380,
+    "wires": [
+      [
+        "security-status-log"
+      ]
+    ]
+  },
+  {
+    "id": "security-status-log",
+    "type": "function",
+    "z": "dryer-ha-tab",
+    "name": "Log rejected commands without payload",
+    "func": "const reason = typeof msg.payload === 'string' ? msg.payload : '';\nif (!/^REJECTED_[A-Z_]{1,60}$/.test(reason)) return null;\nconst previous = flow.get('dryerLastRejectionLog');\nconst now = Date.now();\nif (!previous || reason !== previous.reason || now - previous.at >= 5000) {\n    node.warn(JSON.stringify({event:'device_command_rejected',reason}));\n    flow.set('dryerLastRejectionLog',{reason,at:now});\n}\nreturn null;\n",
+    "outputs": 1,
+    "x": 490,
+    "y": 380,
+    "wires": [
+      []
+    ]
   }
 ]

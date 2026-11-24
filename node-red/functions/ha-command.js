@@ -4,6 +4,8 @@ if (typeof request === 'string') { try { request=JSON.parse(request); } catch (_
 const command = request && request.command;
 const allowed = ['OPEN','CLOSE','STOP','AUTO','MANUAL','RESET'];
 function reject(result) {
+    if (typeof node !== 'undefined') node.warn(JSON.stringify({event:'command_rejected',source:'homeassistant',reason:result,
+        command:allowed.includes(command) ? command : 'INVALID'}));
     return [null, {topic:'dryer/ha/command_result',payload:JSON.stringify({command:command || 'INVALID',result,completed_at:now}),qos:'0',retain:false}];
 }
 if (msg.retain === true) return reject('REJECTED_RETAINED');
@@ -17,9 +19,13 @@ const previous = flow.get('haLastSent');
 if (command !== 'STOP' && previous !== undefined && now-previous < 1000) return reject('REJECTED_RATE_LIMIT');
 const pending = flow.get('haPending');
 if (command !== 'STOP' && pending) return reject('REJECTED_BUSY');
-const sequence = Math.max(now, state.data.last_command_seq+1, (flow.get('haSequence') || 0)+1);
-if (!Number.isSafeInteger(sequence)) return reject('REJECTED_SEQUENCE');
-flow.set('haSequence', sequence); flow.set('haLastSent', now);
+const acknowledged = state.data.last_command_seq;
+const reserved = flow.get('dryerCommandSequence');
+const base = reserved && reserved.session === state.data.session && reserved.value <= acknowledged + 63 ?
+    Math.max(acknowledged, reserved.value) : acknowledged;
+const sequence = base + 1;
+if (!Number.isSafeInteger(acknowledged) || acknowledged < 0 || sequence > 4294967295) return reject('REJECTED_SEQUENCE');
+flow.set('dryerCommandSequence', {session:state.data.session,value:sequence}); flow.set('haLastSent', now);
 // MANUAL selects a safe, stationary manual state; subsequent OPEN/CLOSE moves it.
 const action = command === 'MANUAL' ? 'STOP' : command;
 const queued = {command,session:state.data.session,sequence,issued_at:request.issued_at,sent_at:now};

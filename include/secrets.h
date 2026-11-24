@@ -20,11 +20,18 @@
 #define MQTT_HOST "host.wokwi.internal"
 #endif
 #ifndef MQTT_PORT
-#define MQTT_PORT 1883
+#define MQTT_PORT 8883
 #endif
 #ifndef MQTT_USER
 #define MQTT_USER ""
 #endif
 #ifndef MQTT_PASSWORD
 #define MQTT_PASSWORD ""
+#endif
+
+#if __has_include("mqtt_ca.local.h")
+#include "mqtt_ca.local.h"
+#endif
+#ifndef MQTT_CA_CERT
+#define MQTT_CA_CERT ""
 #endif

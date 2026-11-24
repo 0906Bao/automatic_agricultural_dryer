@@ -42,9 +42,22 @@ test('all commands are non-retained with monotonic session envelope and HTTP req
 });
 test('sequence advances beyond last accepted device command', () => {
   const h = harness(); telemetry(h);
-  h.flow.get('dryerState').data.last_command_seq = Date.now()+1000000;
+  h.flow.get('dryerState').data.last_command_seq = 1000000;
   const [msg] = h.call('command',{payload:{command:'STOP'}});
   assert.ok(Number(msg.payload.split(' ')[1]) > h.flow.get('dryerState').data.last_command_seq);
+});
+
+test('HTTP and HA share bounded reservations, ignore poisoned counters and reset on a new session', () => {
+  const h=harness();telemetry(h);
+  h.flow.set('dryerCommandSequence',{session:'deadbeef',value:Number.MAX_SAFE_INTEGER});
+  const [http]=h.call('command',{payload:{command:'STOP'}});
+  assert.equal(Number(http.payload.split(' ')[1]),8);
+  const [ha]=h.call('ha-command',{payload:{command:'STOP',issued_at:Date.now()}});
+  assert.equal(Number(ha.payload.split(' ')[1]),9);
+  h.call('cache',{payload:{session:'1234abcd',last_command_seq:0}});
+  assert.equal(Number(h.call('command',{payload:{command:'STOP'}})[0].payload.split(' ')[1]),1);
+  h.call('cache',{payload:{session:'deadbeef',last_command_seq:Number.MAX_SAFE_INTEGER},retain:true});
+  assert.equal(h.flow.get('dryerState').data.session,'1234abcd');
 });
 test('flow export matches source and every wire resolves', () => {
   execFileSync(process.execPath,['tools/build-flow.cjs','--check'],{cwd:root});

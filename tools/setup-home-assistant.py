@@ -14,11 +14,14 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--url",default="http://localhost:8123")
 parser.add_argument("--broker",default="192.168.137.1")
 parser.add_argument("--credentials",type=Path,default=Path(os.environ["LOCALAPPDATA"])/"AutomaticAgriculturalDryer/HAOS/access.json")
+parser.add_argument("--mqtt-credentials",type=Path,default=Path(__file__).resolve().parents[1]/".local/security/credentials.json")
+parser.add_argument("--mqtt-ca",type=Path,default=Path(__file__).resolve().parents[1]/".local/security/pki/ca.crt")
 args=parser.parse_args();base=args.url.rstrip("/");client_id=base+"/"
 access={}
 
@@ -72,13 +75,20 @@ for step in ["core_config","analytics","integration"]:
         call("/api/onboarding/"+step,data)
 entries=call("/api/config/config_entries/entry")
 if not any(entry["domain"]=="mqtt" for entry in entries):
+    mqtt_credentials=json.loads(args.mqtt_credentials.read_text(encoding="utf-8"))["mqtt"]
+    boundary="dryer-"+uuid.uuid4().hex
+    body=(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="dryer-ca.crt"\r\nContent-Type: application/x-x509-ca-cert\r\n\r\n'.encode()
+          +args.mqtt_ca.read_bytes()+f'\r\n--{boundary}--\r\n'.encode())
+    upload=urllib.request.Request(base+"/api/file_upload",data=body,headers={"Authorization":"Bearer "+access["access_token"],"Content-Type":"multipart/form-data; boundary="+boundary})
+    with urllib.request.urlopen(upload,timeout=20) as response:ca_file_id=json.load(response)["file_id"]
     flow=call("/api/config/config_entries/flow",{"handler":"mqtt","show_advanced_options":False})
     if flow.get("type")=="menu":
         flow=call("/api/config/config_entries/flow/"+flow["flow_id"],{"next_step_id":"broker"})
     print("MQTT setup step:",flow.get("step_id"))
     result=call("/api/config/config_entries/flow/"+flow["flow_id"],
-        {"broker":args.broker,"port":1883,"protocol":"3.1.1",
-         "other_settings":{"set_client_cert":False,"set_ca_cert":"off","transport":"tcp"}})
+        {"broker":args.broker,"port":8883,"protocol":"5",
+         "username":"dryer-homeassistant","password":mqtt_credentials["dryer-homeassistant"],
+         "other_settings":{"set_client_cert":False,"set_ca_cert":"custom","certificate":ca_file_id,"tls_insecure":False,"transport":"tcp"}})
     print("MQTT setup result:",result.get("type"),result.get("step_id"),result.get("errors",{}))
     if result.get("type")!="create_entry": raise SystemExit("MQTT setup requires another step; existing integrations preserved.")
 print("HA onboarding complete. Username: dryer-admin; private credentials:",args.credentials)
