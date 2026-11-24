@@ -1,9 +1,16 @@
+x-bounded-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # HAOS runs in VMware. This is only a TCP access gateway, not HA Container.
   ha-access:
-    image: nodered/node-red:latest
+    image: nodered/node-red:5.0.8@sha256:b5adb6c9dd29ab80c852d82bc87daed84e729dcff9b00ca1bf958e6de470f2c1
     container_name: iot-ha-access
     restart: unless-stopped
+    logging: *bounded-logging
     entrypoint: ["node", "/opt/dryer/ha-access.cjs", "${HA_VM_ADDRESS:-192.168.137.50}", "${HA_VM_PORT:-80}"]
     healthcheck:
       disable: true
@@ -13,17 +20,22 @@ services:
       - ./tools/ha-access.cjs:/opt/dryer/ha-access.cjs:ro
 
   mosquitto:
-    image: eclipse-mosquitto:2
+    image: eclipse-mosquitto:2.1.2@sha256:38c0da4f2ef84284d47b3b3eeea1cb3bdeabe81ee10caf0cd5c5ff61ee3ea408
     container_name: iot-mosquitto
     restart: unless-stopped
+    logging: *bounded-logging
     ports:
-      - "1883:1883"
+      - "127.0.0.1:8883:8883"
+      - "${MQTT_VM_BIND_ADDRESS:-192.168.137.1}:8883:8883"
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./.local/security/passwords:/mosquitto/config/passwords:ro
+      - ./mosquitto/acl.example:/mosquitto/config/acl:ro
+      - ./.local/security/pki/server:/mosquitto/certs:ro
       - mosquitto_data:/mosquitto/data
 
   node-red-init:
-    image: nodered/node-red:latest
+    image: nodered/node-red:5.0.8@sha256:b5adb6c9dd29ab80c852d82bc87daed84e729dcff9b00ca1bf958e6de470f2c1
     entrypoint: ["/bin/sh", "-c"]
     command: ["if [ ! -e /data/flows.json ]; then cp /seed/flows.json /data/flows.json; fi"]
     volumes:
@@ -31,13 +43,18 @@ services:
       - ./node-red/flows.json:/seed/flows.json:ro
 
   node-red:
-    image: nodered/node-red:latest
+    image: nodered/node-red:5.0.8@sha256:b5adb6c9dd29ab80c852d82bc87daed84e729dcff9b00ca1bf958e6de470f2c1
     container_name: iot-node-red
     restart: unless-stopped
+    logging: *bounded-logging
     ports:
-      - "1880:1880"
+      - "127.0.0.1:1880:1880"
+    command: ["--settings", "/opt/dryer/settings.js"]
     volumes:
       - node_red_data:/data
+      - ./node-red/settings.secure.cjs:/opt/dryer/settings.js:ro
+      - ./.local/security/node-red-auth.json:/run/dryer/node-red-auth.json:ro
+      - ./.local/security/pki/ca.crt:/run/dryer/ca.crt:ro
     depends_on:
       mosquitto:
         condition: service_started

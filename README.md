@@ -50,8 +50,8 @@ Nếu file đã tồn tại, chỉnh sửa trực tiếp và giữ lại cấu h
 | `WIFI_SSID` | `"Wokwi-GUEST"` | Tên Wi-Fi 2.4 GHz |
 | `WIFI_PASSWORD` | `""` | Mật khẩu Wi-Fi |
 | `MQTT_HOST` | `"host.wokwi.internal"` | IP LAN của máy chạy Docker |
-| `MQTT_PORT` | `1883` | `1883` |
-| `MQTT_USER`, `MQTT_PASSWORD` | Để trống với broker lab mặc định | Điền nếu broker yêu cầu xác thực |
+| `MQTT_PORT` | `8883` | `8883` |
+| `MQTT_USER`, `MQTT_PASSWORD` | Tài khoản `dryer-esp` đã cấp | Tài khoản `dryer-esp` đã cấp |
 
 `include/secrets.h` tự nạp cấu hình local. File `secrets.local.h` đã được Git bỏ qua; không đưa thông tin đăng nhập thật vào repository.
 
@@ -66,9 +66,9 @@ Compose tự chạy dịch vụ khởi tạo flow mà Node-RED phụ thuộc. V�
 
 - Trình chỉnh sửa: [http://localhost:1880](http://localhost:1880).
 - Dashboard điều khiển: [http://localhost:1880/dryer](http://localhost:1880/dryer).
-- Broker MQTT: cổng `1883` trên máy chạy Docker.
+- Broker MQTT: cổng `8883` trên máy chạy Docker.
 
-Broker mặc định cho phép kết nối không xác thực, dành cho thử nghiệm trong mạng tin cậy. Không công khai cổng `1883` ra Internet.
+Broker yêu cầu TLS, tài khoản và ACL; xem [hướng dẫn TLS](docs/SECURITY_TLS.md). Node-RED chỉ mở trên localhost và yêu cầu đăng nhập; MQTT chỉ bind localhost và địa chỉ mạng VM. Cần provision các tệp `.local/security/passwords` và `.local/security/node-red-auth.json` trước khi khởi động trên máy mới. Xem [cấu hình bảo mật và cách truy cập](docs/SECURITY_PRIORITY1.md). ESP32 thật trên LAN cần bổ sung đúng IP vào cấu hình bind/firewall; cấu hình hiện tại dành cho Wokwi và VM.
 
 ### 2.4. Chạy mô phỏng Wokwi
 
@@ -123,7 +123,7 @@ Hệ thống khởi động ở trạng thái `STOPPED`. Sau khi dashboard nhậ
 
 MQTT dùng các topic `dryer/telemetry` (dữ liệu), `dryer/status` (phản hồi), `dryer/availability` (online/offline) và `dryer/command` (lệnh). Dashboard tự tạo lệnh theo phiên và số thứ tự mà firmware yêu cầu.
 
-Nếu dashboard không có dữ liệu, kiểm tra Wi-Fi, `MQTT_HOST`, gateway Wokwi và firewall cổng `1883`. Xem log bằng:
+Nếu dashboard không có dữ liệu, kiểm tra Wi-Fi, `MQTT_HOST`, gateway Wokwi và firewall cổng `8883`. Xem log bằng:
 
 ```powershell
 docker compose logs --tail 100 mosquitto node-red

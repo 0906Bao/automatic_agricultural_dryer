@@ -16,7 +16,7 @@ out.session = d.session;
 for (const key of ['rain_adc', 'light_adc']) {
     out[key] = number(d[key], 0, 4095, true); if (out[key] === null) return null;
 }
-out.last_command_seq = number(d.last_command_seq, 0, Number.MAX_SAFE_INTEGER, true);
+out.last_command_seq = number(d.last_command_seq, 0, 4294967295, true);
 if (out.last_command_seq === null) return null;
 for (const key of ['rain', 'dark', 'dht_valid', 'safe_to_open', 'limit_covered', 'limit_open',
     'estop', 'driver_fault', 'motor_output_enabled', 'motor_active']) {

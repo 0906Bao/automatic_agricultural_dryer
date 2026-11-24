@@ -4,7 +4,8 @@ const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, 'node-red', file), 'utf8');
 const flow = [
   {id:'dryer-tab', type:'tab', label:'Agricultural dryer', disabled:false, info:'Local lab dashboard at /dryer. Commands are never retained.'},
-  {id:'dryer-broker', type:'mqtt-broker', name:'Mosquitto (Docker)', broker:'mosquitto', port:'1883', clientid:'dryer-node-red', autoConnect:true, usetls:false, protocolVersion:'4', keepalive:'30', cleansession:true, autoUnsubscribe:true},
+  {id:'dryer-mqtt-tls',type:'tls-config',name:'Dryer private CA',ca:'/run/dryer/ca.crt',certType:'files',verifyservercert:true,servername:'mosquitto'},
+  {id:'dryer-broker', type:'mqtt-broker', name:'Mosquitto (Docker)', broker:'mosquitto', port:'8883', clientid:'dryer-node-red', autoConnect:true, usetls:true, verifyservercert:true,tls:'dryer-mqtt-tls',protocolVersion:'4', keepalive:'30', cleansession:true, autoUnsubscribe:true},
   {id:'telemetry-in', type:'mqtt in', z:'dryer-tab', name:'Telemetry', topic:'dryer/telemetry', qos:'0', datatype:'json', broker:'dryer-broker', x:140,y:80,wires:[['cache']]},
   {id:'cache', type:'function', z:'dryer-tab', name:'Cache fresh telemetry', func:read('functions/cache.js'), outputs:1, x:390,y:80,wires:[[]]},
   {id:'page-in', type:'http in', z:'dryer-tab', name:'Dashboard', url:'/dryer', method:'get', upload:false, x:140,y:160,wires:[['page']]},
@@ -20,7 +21,7 @@ const flow = [
 const output = JSON.stringify(flow, null, 2) + '\n';
 const haFlow = [
   {id:'dryer-ha-tab',type:'tab',label:'Dryer - Home Assistant bridge',disabled:false,info:'MQTT bridge for Home Assistant alongside the existing Node-RED dashboard.'},
-  {id:'dryer-ha-broker',type:'mqtt-broker',name:'Existing Mosquitto - HA bridge',broker:'mosquitto',port:'1883',clientid:'dryer-ha-bridge',autoConnect:true,usetls:false,protocolVersion:'4',keepalive:'15',cleansession:true,autoUnsubscribe:true,
+  {id:'dryer-ha-broker',type:'mqtt-broker',name:'Existing Mosquitto - HA bridge',broker:'mosquitto',port:'8883',clientid:'dryer-ha-bridge',autoConnect:true,usetls:true,verifyservercert:true,tls:'dryer-mqtt-tls',protocolVersion:'4',keepalive:'15',cleansession:true,autoUnsubscribe:true,
     willTopic:'dryer/ha/availability',willQos:'0',willPayload:'offline',willRetain:false,
     closeTopic:'dryer/ha/availability',closeQos:'0',closePayload:'offline',closeRetain:false},
   {id:'ha-telemetry',type:'mqtt in',z:'dryer-ha-tab',name:'Live firmware telemetry',topic:'dryer/telemetry',qos:'0',datatype:'json',broker:'dryer-ha-broker',x:130,y:80,wires:[['ha-normalize']]},
@@ -33,7 +34,11 @@ const haFlow = [
   {id:'ha-mqtt-out',type:'mqtt out',z:'dryer-ha-tab',name:'Non-retained state / commands',topic:'',qos:'0',retain:'false',broker:'dryer-ha-broker',x:950,y:180,wires:[]},
   {id:'ha-debug',type:'debug',z:'dryer-ha-tab',name:'Dryer HA telemetry / ACK',active:false,tosidebar:true,console:false,tostatus:false,complete:'payload',targetType:'msg',x:960,y:300,wires:[]}
 ];
-for (const [filename, nodes] of [['flows.json',[...flow,...haFlow]],['home-assistant.flow.json',haFlow]]) {
+haFlow.push(
+  {id:'security-status-in',type:'mqtt in',z:'dryer-ha-tab',name:'Device security events',topic:'dryer/status',qos:'0',datatype:'utf8',broker:'dryer-ha-broker',x:150,y:380,wires:[['security-status-log']]},
+  {id:'security-status-log',type:'function',z:'dryer-ha-tab',name:'Log rejected commands without payload',func:read('functions/security-status.js'),outputs:1,x:490,y:380,wires:[[]]}
+);
+for (const [filename, nodes] of [['flows.json',[...flow,...haFlow]],['home-assistant.flow.json',[flow[1],...haFlow]]]) {
   const target = path.join(root, 'node-red', filename);
   const content = JSON.stringify(nodes,null,2)+'\n';
   if (process.argv.includes('--check')) {

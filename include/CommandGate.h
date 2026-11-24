@@ -8,6 +8,9 @@ namespace dryer {
 class CommandGate {
  public:
   uint64_t lastSequence = 0;
+  static constexpr uint64_t MaxSequence = 4294967295ULL;
+  static constexpr uint64_t MaxJump = 64;
+  bool rotationRequired() const { return lastSequence >= MaxSequence - MaxJump; }
   Command accept(const char* envelope, const char* session) {
     char received[9] = {}, digits[17] = {}, text[6] = {}, extra;
     if (sscanf(envelope, "%8[0-9a-f] %16[0-9] %5[A-Z]%c",
@@ -15,7 +18,8 @@ class CommandGate {
     if (strcmp(received, session)) return Command::Invalid;
     uint64_t sequence = strtoull(digits, nullptr, 10);
     Command cmd = parseCommand(text);
-    if (sequence <= lastSequence || sequence > 9007199254740991ULL ||
+    if (sequence <= lastSequence || sequence > MaxSequence ||
+        sequence - lastSequence > MaxJump ||
         cmd == Command::Invalid) return Command::Invalid;
     lastSequence = sequence; // rejected physical commands cannot be replayed later
     return cmd;

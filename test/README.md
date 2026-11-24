@@ -19,6 +19,12 @@ emulator. It never sends commands to the real dryer topic. It restarts HA Core,
 so run during maintenance; requires paho-mqtt, PyYAML and a local setup account.
 
 These checks do not use a real motor, ESP32 or MQTT broker.
+`security.test.cjs` checks mandatory authentication, preservation of credential encryption,
+audit logging and suppression/redaction of device rejection events.
+The current TLS/ACL runtime is verified with `python tools/harden-tls.py verify` and
+the stationary STOP-only sequence check `python tools/harden-tls.py verify_commands`.
+Legacy namespaced runtime smoke tests require an isolated test broker/account;
+do not broaden production ACLs to run them.
 `ha-status-card.test.cjs` checks icon/colour changes, stale-data handling,
 fault and waiting states, and countdown formatting in the Home Assistant card.
 See `docs/CONTROL_VI.md` for hardware acceptance scenarios.

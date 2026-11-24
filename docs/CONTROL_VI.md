@@ -1,5 +1,6 @@
 # Điều khiển mái che và đưa lên phần cứng
 
+> Cập nhật: MQTT hiện đã chuyển sang TLS cổng 8883 và sequence mới. Xem [hướng dẫn hiện tại](SECURITY_TLS.md); phần Priority 1 mô tả giai đoạn trước chuyển đổi.
 ## 1. Cấu hình theo máy
 
 Sao chép `include/secrets.local.h.example` thành `include/secrets.local.h` nếu chưa có. Nếu đã có, bổ sung các macro còn thiếu:
@@ -88,7 +89,7 @@ Mở [dashboard](http://localhost:1880/dryer). Dashboard dùng HTTP/Template/Fun
 
 Payload lệnh: `<session> <sequence> <COMMAND>`. Ví dụ `deadbeef 123 AUTO`, trong đó session phải lấy từ telemetry của lần boot hiện tại; sequence là số nguyên dương tăng dần, tối đa 9007199254740991. Lệnh hợp lệ: `STOP AUTO OPEN CLOSE RESET`. Dashboard tự tạo envelope. Thiết bị từ chối session cũ, sequence trùng/thấp hơn và lệnh không hợp lệ. `last_command_result` đi cùng `last_command_seq` báo kết quả lệnh MQTT cuối; `command_result` là kết quả gần nhất từ bất kỳ nguồn điều khiển nào. Cơ chế sequence chống phát lại qua reconnect/boot, **không xác thực người gửi**; tuyệt đối không retain lệnh. Lệnh retain chưa từng được xử lý trong cùng session vẫn có thể chạy khi subscribe lại, nên xóa retained command nếu broker từng có.
 
-API dashboard: GET `/dryer/state`, POST `/dryer/command` với JSON `{"command":"AUTO"}`. MQTT và HTTP hiện dành cho lab trong mạng tin cậy, chưa có authentication/TLS. Không mở port điều khiển ra Internet. Khi triển khai thật, cấu hình xác thực Mosquitto và Node-RED, đồng thời cập nhật MQTT_USER/PASSWORD.
+API dashboard (nếu flow này được bật): GET `/dryer/state`, POST `/dryer/command` với JSON `{"command":"AUTO"}`. MQTT dùng TLS cổng 8883 với tài khoản/ACL; quản trị Node-RED và HTTP dashboard dùng tài khoản riêng. HTTP giao diện chưa có TLS và Node-RED chỉ bind localhost; MQTT chỉ bind localhost và mạng VM. Xem [TLS](SECURITY_TLS.md) trước khi dùng ESP32 thật qua LAN. Không mở port điều khiển ra Internet.
 
 Mã giao diện: `node-red/dashboard.html`; Function nodes: `node-red/functions/`. Sau khi sửa, chạy `node tools/build-flow.cjs` rồi import lại flow. File `flows.json` là bản export được sinh từ các nguồn này.
 

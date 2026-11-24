@@ -200,6 +200,20 @@ int main() {
     CHECK(gate.accept("deadbeef 9999999999999999 STOP", "deadbeef") == Command::Invalid);
     CHECK(gate.accept("deadbeef 2 STOP", "deadbeef") == Command::Stop);
     CHECK(gate.accept("deadbeef 3 RESET", "deadbeef") == Command::Reset);
+    CHECK(gate.accept("deadbeef 9007199254740991 CLOSE", "deadbeef") == Command::Invalid);
+    CHECK(gate.accept("deadbeef 4294967295 CLOSE", "deadbeef") == Command::Invalid);
+    CHECK(gate.lastSequence == 3);
+    CHECK(gate.accept("deadbeef 4 STOP", "deadbeef") == Command::Stop);
+    CHECK(gate.accept("deadbeef 69 CLOSE", "deadbeef") == Command::Invalid);
+    CHECK(gate.accept("deadbeef 68 CLOSE", "deadbeef") == Command::Close);
+    CHECK(gate.accept("deadbeef 68 OPEN", "deadbeef") == Command::Invalid);
+    gate.lastSequence = CommandGate::MaxSequence - CommandGate::MaxJump - 1;
+    CHECK(!gate.rotationRequired());
+    CHECK(gate.accept("deadbeef 4294967231 STOP", "deadbeef") == Command::Stop);
+    CHECK(gate.rotationRequired());
+    gate.lastSequence = 0; // firmware rotates session at this boundary
+    CHECK(gate.accept("deadbeef 4294967232 OPEN", "1234abcd") == Command::Invalid);
+    CHECK(gate.accept("1234abcd 1 STOP", "1234abcd") == Command::Stop);
   }
   // Long mixed input stream checks electrical invariants across faults/reversals.
   {

@@ -31,7 +31,7 @@ start=(datetime.now(timezone.utc)-timedelta(minutes=15)).isoformat()
 query=urllib.parse.urlencode({"filter_entity_id":",".join(ids[:4]),"minimal_response":"","significant_changes_only":""})
 history=api("/history/period/"+urllib.parse.quote(start,safe="")+"?"+query)
 transitions=[[{k:s.get(k) for k in ["entity_id","state","last_changed"]} for s in group[-15:]] for group in history]
-topics=["dryer/telemetry","dryer/availability","dryer/ha/state","dryer/ha/availability","dryer/ha/heartbeat"]
+topics=["dryer/telemetry","dryer/availability","dryer/status"]
 stats={};lock=threading.Lock();connected=threading.Event()
 def on_connect(client,userdata,flags,reason,props):
     if reason==0:
@@ -47,8 +47,11 @@ def on_message(client,userdata,msg):
             entry["last"]={k:payload.get(k) for k in ["session","limit_covered","limit_open","mode","motion","fault","motor_output_enabled"]}
         except (ValueError,TypeError):entry["last"]=msg.payload.decode(errors="replace")
 client=mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,client_id="dryer-readonly-diagnostic")
+accounts=json.loads((ROOT/".local/security/credentials.json").read_text(encoding="utf-8"))["mqtt"]
+client.username_pw_set("dryer-nodered",accounts["dryer-nodered"])
+client.tls_set(ca_certs=str(ROOT/".local/security/pki/ca.crt"))
 client.on_connect=on_connect;client.on_message=on_message
-client.connect("localhost",1883,15);client.loop_start()
+client.connect("localhost",8883,15);client.loop_start()
 if not connected.wait(5):raise SystemExit("Diagnostic subscriber could not connect")
 print("Observing MQTT for 35 seconds without issuing commands...",flush=True)
 time.sleep(35);client.disconnect();client.loop_stop()

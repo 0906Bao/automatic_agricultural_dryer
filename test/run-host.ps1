@@ -13,6 +13,6 @@ try {
         & ./.pio/host-tests/test_controller.exe
         if ($LASTEXITCODE -ne 0) { throw 'Controller tests failed' }
     } else { throw 'Visual C++ build tools not found; use test/run-host.sh with g++.' }
-    node --test test/node-red.test.cjs test/home-assistant.test.cjs test/ha-status-card.test.cjs
+    node --test test/node-red.test.cjs test/home-assistant.test.cjs test/ha-status-card.test.cjs test/security.test.cjs
     if ($LASTEXITCODE -ne 0) { throw 'Node-RED tests failed' }
 } finally { Pop-Location }
